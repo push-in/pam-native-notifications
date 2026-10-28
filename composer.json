@@ -9,8 +9,7 @@
         "php",
         "android",
         "ios",
-        "location",
-        "gps"
+        "notifications"
     ],
     "require": {
         "php": "^8.5",

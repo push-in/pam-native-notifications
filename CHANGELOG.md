@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Bound background push rendering to one worker and 64 queued messages; release idle workers.
+
 ## 0.1.0
 
 - Owns the optional native notifications capability extracted from the 1.46 core.
