@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 - 2026-10-28
+
+- Android: the plugin compiles as its own Gradle module. Conversation avatars
+  from `pam-file:///` paths resolve with the plugin's own private-path helper;
+  the core's `resolvePrivateFile` is internal to the app module, so 0.1.2 and
+  0.1.3 failed to build in a real app.
+
 ## 0.1.3 - 2026-10-28
 
 - iOS: compiles as its own Swift module against pam-native 1.46.0, which

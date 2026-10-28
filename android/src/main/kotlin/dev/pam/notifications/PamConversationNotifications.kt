@@ -539,3 +539,21 @@ public class PamNotificationActionReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/**
+ * Resolves a relative path strictly inside the private PAM files directory.
+ * A copy of the core helper: plugin modules compile against the plugin API
+ * only, so the core's internal function is not visible here.
+ */
+private fun resolvePrivateFile(root: File, path: String): File {
+    require(path.isNotBlank() && !File(path).isAbsolute && '\\' !in path && '\u0000' !in path) {
+        "File path must be relative"
+    }
+    require(path.split('/').none { it.isEmpty() || it == "." || it == ".." }) { "Invalid file path" }
+    val canonicalRoot = root.canonicalFile
+    val file = File(canonicalRoot, path).canonicalFile
+    require(file.path.startsWith(canonicalRoot.path + File.separator) && file.isFile) {
+        "File is outside the private files directory or missing"
+    }
+    return file
+}
