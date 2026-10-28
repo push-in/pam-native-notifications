@@ -1,6 +1,6 @@
 import XCTest
-import PamNative
 @testable import PamNativeNotifications
+@testable import PamNative
 
 /// iOS mirror of the Android 1.1.x native capability coverage
 /// (NativeCapabilitiesInstrumentedTest). Uncompiled — needs Mac validation.
