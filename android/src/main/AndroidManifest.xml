@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><provider android:name="dev.pam.notifications.PluginHostProvider" android:authorities="${applicationId}.pam.notifications.host" android:exported="false" /><receiver android:name="dev.pam.notifications.NotificationReceiver" android:exported="false" />
+<receiver android:name="dev.pam.notifications.PamNotificationActionReceiver" android:exported="false" />
+<receiver android:name="dev.pam.notifications.BackgroundPushReceiver" android:exported="false"><intent-filter><action android:name="dev.pam.nativeapp.action.PUSH_RECEIVED" /></intent-filter></receiver>
+</application></manifest>

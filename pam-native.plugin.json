@@ -1,0 +1,47 @@
+{
+    "$schema": "vendor/pushinbr/pam-native/resources/pam-native.plugin.schema.json",
+    "version": 1,
+    "protocol": 1,
+    "pamNative": {
+        "minimum": "1.46.0",
+        "maximumExclusive": "2.0.0"
+    },
+    "php": {
+        "provider": "Pam\\Native\\Notifications\\NotificationsPluginProvider"
+    },
+    "android": {
+        "namespace": "dev.pam.notifications",
+        "minSdk": 26,
+        "permissions": [
+            "android.permission.POST_NOTIFICATIONS"
+        ],
+        "dependencies": [
+            "androidx.core:core-ktx:1.17.0"
+        ],
+        "sourceDirs": [
+            "android/src/main/kotlin"
+        ],
+        "manifest": "android/src/main/AndroidManifest.xml"
+    },
+    "ios": {
+        "minimumVersion": "15.0",
+        "sourceDirs": [
+            "ios/Sources"
+        ],
+        "frameworks": [
+            "UserNotifications",
+            "UIKit",
+            "Security"
+        ],
+        "usageDescriptions": {}
+    },
+    "idl": "pam-native.idl.json",
+    "modules": [
+        {
+            "name": "notifications",
+            "class": "dev.pam.notifications.NotificationsModule",
+            "iosClass": "NotificationsModule"
+        }
+    ],
+    "views": []
+}

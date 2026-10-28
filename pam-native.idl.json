@@ -1,0 +1,7 @@
+{
+    "$schema": "vendor/pushinbr/pam-native-plugin-kit/resources/pam-native.idl.schema.json",
+    "version": 1,
+    "namespace": "Pam.Notifications",
+    "enums": {},
+    "records": {}
+}

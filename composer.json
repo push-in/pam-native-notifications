@@ -1,0 +1,36 @@
+{
+    "name": "pushinbr/pam-native-notifications",
+    "description": "Optional native notifications, conversation actions and push rendering for PAM Native.",
+    "type": "pam-native-plugin",
+    "license": "Apache-2.0",
+    "keywords": [
+        "pam",
+        "pam-native",
+        "php",
+        "android",
+        "ios",
+        "location",
+        "gps"
+    ],
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-native": "^1.46"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pam\\Native\\Notifications\\": "src/"
+        }
+    },
+    "extra": {
+        "pam-native": {
+            "plugin": "pam-native.plugin.json"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    },
+    "config": {
+        "platform-check": true,
+        "sort-packages": true
+    }
+}

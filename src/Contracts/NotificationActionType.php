@@ -1,0 +1,13 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Native\Notifications\Contracts;
+
+enum NotificationActionType: int
+{
+    case Reply = 1;
+    case MarkRead = 2;
+    /** A background button declared with PushRenderingRule::action(). */
+    case Button = 3;
+}
