@@ -15,6 +15,9 @@ final class NotificationsPluginProvider implements PluginProvider
     public function boot(): void
     {
         \Pam\Native\Plugin\RuntimeHooks::onRouteFocused(self::class, Contracts\PushRendering::routeFocused(...));
-        \Pam\Native\Plugin\RuntimeHooks::onReset(self::class, PushNotifications::resetRuntime(...));
+        \Pam\Native\Plugin\RuntimeHooks::onReset(self::class, static function (): void {
+            PushNotifications::resetRuntime();
+            Notifications::resetRuntime();
+        });
     }
 }
