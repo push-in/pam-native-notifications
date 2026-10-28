@@ -241,7 +241,7 @@ public object PamPushRendering {
             putExtra("pam.notification.deepLink", deepLink)
         }
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(notificationSmallIcon(context))
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Preserve the host notification glyph through resource lookup, without linking the host R class.
+
 ## 0.1.1
 
 - Bound background push rendering to one worker and 64 queued messages; release idle workers.

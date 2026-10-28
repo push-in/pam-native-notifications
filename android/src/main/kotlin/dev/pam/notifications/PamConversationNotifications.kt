@@ -282,7 +282,7 @@ public object PamConversationNotifications {
         }
         val launch = openIntent(context, spec)
         val builder = NotificationCompat.Builder(context, spec.channelId)
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(notificationSmallIcon(context))
             .setStyle(style)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setShortcutId(spec.key)
