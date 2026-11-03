@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.5 - 2026-11-02
+
+- `PushRenderingRule::color('#RRGGBB')`: Android accent of the small icon,
+  the actions and the channel lights.
+- `PushRenderingRule::largeIcon('{avatar_url}')` (conversation and standard
+  rules) and `image('{thumbnail_url}')` (standard rules, `BigPictureStyle`;
+  big text without it). HTTPS or private-file templates; failures are skipped.
+- `channel($id, $name, description:, vibrate:, lights:)`: options applied
+  when Android creates the channel.
+- `suppressInForeground()`: the rule never notifies while the app is in the
+  foreground (Android and iOS rendering).
+- Android small icon: a host drawable `pam_notification_icon` wins; otherwise
+  the app's adaptive-icon monochrome layer, cropped to its central 88 dp,
+  replaces the generic `pam_icon` glyph.
+
 ## 0.1.4 - 2026-10-28
 
 - Android: the plugin compiles as its own Gradle module. Conversation avatars

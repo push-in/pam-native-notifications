@@ -812,7 +812,7 @@ public enum PamActiveRoute {
         }
     }
 
-    /// Suppression entries are `{route, params}` or `{path}` templates.
+    /// Suppression entries are `{route, params}`, `{path}` templates or `{foreground: true}`.
     static func matches(_ rules: [[String: Any]]?, _ variables: [String: String]) -> Bool {
         lock.lock()
         let foreground = foregroundOverride ?? active
@@ -822,6 +822,7 @@ public enum PamActiveRoute {
         lock.unlock()
         guard foreground, let rules else { return false }
         for rule in rules {
+            if (rule["foreground"] as? Bool) == true { return true }
             if let routePath = rule["path"] as? String, !routePath.isEmpty {
                 guard PamNotificationTemplate.complete(routePath, variables) else { continue }
                 if !currentPath.isEmpty,

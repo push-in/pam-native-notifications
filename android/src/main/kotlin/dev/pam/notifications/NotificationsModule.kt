@@ -307,7 +307,7 @@ class NotificationReceiver : BroadcastReceiver() {
             )
         }
         val notification = android.app.Notification.Builder(context, channelId)
-            .setSmallIcon(notificationSmallIcon(context))
+            .setPamSmallIcon(context)
             .setContentTitle(intent.getStringExtra("title").orEmpty())
             .setContentText(intent.getStringExtra("body").orEmpty())
             .setAutoCancel(true)

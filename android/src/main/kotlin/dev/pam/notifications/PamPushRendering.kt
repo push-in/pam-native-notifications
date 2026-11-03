@@ -2,7 +2,6 @@ package dev.pam.notifications
 
 import dev.pam.nativeapp.modules.*
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -34,7 +33,7 @@ public object PamActiveRoute {
         this.foreground = foreground
     }
 
-    /** Suppression entries are `{route, params}` or `{path}` templates. */
+    /** Suppression entries are `{route, params}`, `{path}` templates or `{foreground: true}`. */
     internal fun matches(rules: JSONArray?, variables: Map<String, String>): Boolean {
         if (!foreground || rules == null) return false
         for (index in 0 until rules.length()) {
@@ -46,6 +45,7 @@ public object PamActiveRoute {
                 if (path.isNotEmpty() && normalize(path) == expected) return true
                 continue
             }
+            if (rule.optBoolean("foreground")) return true
             if (rule.optString("route") != name || name.isEmpty()) continue
             val expectedParams = rule.optJSONObject("params") ?: JSONObject()
             val matched = expectedParams.keys().asSequence().all { key ->
@@ -177,6 +177,7 @@ public object PamPushRendering {
                         channelName = rule.optString("channelName").ifBlank { "Messages" },
                         replyFailures = rule.optJSONObject("replyFailures"),
                         failure = null,
+                        style = PamNotificationStyle.resolve(rule.optJSONObject("style"), ::text),
                     ),
                 )
                 return true
@@ -185,7 +186,10 @@ public object PamPushRendering {
                 if (PamActiveRoute.matches(rule.optJSONArray("suppress"), variables)) return true
                 val title = text(rule.optString("title"))
                 if (title.isEmpty()) return false
-                notify(context, rule, variables["_id"].orEmpty(), title, text(rule.optString("body")), text(rule.optString("deepLink")), dataJson)
+                notify(
+                    context, rule, variables["_id"].orEmpty(), title, text(rule.optString("body")), text(rule.optString("deepLink")), dataJson,
+                    PamNotificationStyle.resolve(rule.optJSONObject("style"), ::text),
+                )
                 return true
             }
         }
@@ -200,8 +204,9 @@ public object PamPushRendering {
         body: String,
         deepLink: String,
         dataJson: String,
+        style: JSONObject?,
     ) {
-        val notification = buildNotification(context, rule, id, title, body, deepLink, dataJson)
+        val notification = buildNotification(context, rule, id, title, body, deepLink, dataJson, style)
         val compat = NotificationManagerCompat.from(context)
         if (!PamConversationNotifications.canPostNotifications(context, compat)) return
         try {
@@ -220,18 +225,17 @@ public object PamPushRendering {
         body: String,
         deepLink: String,
         dataJson: String,
+        style: JSONObject? = null,
     ): android.app.Notification {
         val channelId = rule.optString("channelId").ifBlank { "pam-push" }
-        val manager = context.getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(channelId) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    channelId,
-                    rule.optString("channelName").ifBlank { "Notifications" },
-                    if (rule.optInt("importance", 2) >= 3) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT,
-                ),
-            )
-        }
+        PamNotificationStyle.ensureChannel(
+            context,
+            channelId,
+            rule.optString("channelName").ifBlank { "Notifications" },
+            if (rule.optInt("importance", 2) >= 3) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT,
+            style,
+        )
+        val picture = style?.optString("image")?.takeIf { it.isNotEmpty() }?.let { PamConversationNotifications.picture(context, it) }
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             putExtra("pam.notification.opened", true)
             putExtra("pam.notification.id", id)
@@ -241,10 +245,16 @@ public object PamPushRendering {
             putExtra("pam.notification.deepLink", deepLink)
         }
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(notificationSmallIcon(context))
+            .setPamSmallIcon(context)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setStyle(
+                if (picture != null) {
+                    NotificationCompat.BigPictureStyle().bigPicture(picture).setBigContentTitle(title).setSummaryText(body)
+                } else {
+                    NotificationCompat.BigTextStyle().bigText(body)
+                },
+            )
             .setAutoCancel(true)
             .apply {
                 launch?.let {
@@ -258,6 +268,7 @@ public object PamPushRendering {
                     )
                 }
             }
+        PamNotificationStyle.decorate(context, builder, style)
         val buttons = rule.optJSONArray("actions") ?: JSONArray()
         for (index in 0 until minOf(buttons.length(), 3)) {
             val button = buttons.optJSONObject(index) ?: continue
