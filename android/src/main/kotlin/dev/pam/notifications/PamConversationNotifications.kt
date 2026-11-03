@@ -103,6 +103,8 @@ internal data class ConversationSpec(
     val replyFailures: JSONObject? = null,
     /** The reply that failed: failedText, text, retry, keepReply, actionId, uuid, timestamp. */
     val failure: JSONObject? = null,
+    /** Resolved presentation extras: color, largeIcon, channel options (PamNotificationStyle). */
+    val style: JSONObject? = null,
 ) {
     init {
         require(KEY.matches(key)) { "Conversation key must contain 1-128 safe characters" }
@@ -127,6 +129,7 @@ internal data class ConversationSpec(
         .put("silent", silent)
         .put("replyFailures", replyFailures ?: JSONObject.NULL)
         .put("failure", failure ?: JSONObject.NULL)
+        .put("style", style ?: JSONObject.NULL)
 
     companion object {
         const val DEFAULT_CHANNEL = "pam-messages"
@@ -155,6 +158,7 @@ internal data class ConversationSpec(
                 silent = json.optBoolean("silent"),
                 replyFailures = json.optJSONObject("replyFailures"),
                 failure = json.optJSONObject("failure"),
+                style = json.optJSONObject("style"),
             )
         }
 
@@ -286,7 +290,7 @@ public object PamConversationNotifications {
         }
         val launch = openIntent(context, spec)
         val builder = NotificationCompat.Builder(context, spec.channelId)
-            .setSmallIcon(notificationSmallIcon(context))
+            .setPamSmallIcon(context)
             .setStyle(style)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setShortcutId(spec.key)
@@ -299,6 +303,7 @@ public object PamConversationNotifications {
             .setGroup("pam-conversation-${spec.key}")
             .setWhen(spec.messages.lastOrNull()?.timestamp ?: System.currentTimeMillis())
             .setShowWhen(true)
+        PamNotificationStyle.decorate(context, builder, spec.style)
         spec.messages.lastOrNull()?.sender?.let { builder.addPerson(people[it.key.ifEmpty { it.name }]) }
         if (failure != null) {
             builder.setSubText(failureSender).setContentText(failure.optString("text"))
@@ -412,7 +417,7 @@ public object PamConversationNotifications {
             4 -> NotificationManager.IMPORTANCE_HIGH
             else -> NotificationManager.IMPORTANCE_DEFAULT
         }
-        manager.createNotificationChannel(NotificationChannel(spec.channelId, spec.channelName, importance))
+        PamNotificationStyle.ensureChannel(context, spec.channelId, spec.channelName, importance, spec.style)
     }
 
     private fun person(context: Context, value: ConversationPerson, key: String): Person =
@@ -423,7 +428,13 @@ public object PamConversationNotifications {
             .build()
 
     /** Loads an avatar from the image disk cache, the private sandbox or HTTPS. */
-    internal fun avatar(context: Context, source: String): Bitmap? {
+    internal fun avatar(context: Context, source: String): Bitmap? =
+        image(context, source, AVATAR_EDGE)?.let(::circle)
+
+    /** Loads a big picture (no crop), downsampled to about [PICTURE_EDGE] pixels. */
+    internal fun picture(context: Context, source: String): Bitmap? = image(context, source, PICTURE_EDGE)
+
+    private fun image(context: Context, source: String, edge: Int): Bitmap? {
         if (source.isBlank()) return null
         return runCatching {
             val bytes = when {
@@ -438,9 +449,8 @@ public object PamConversationNotifications {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             var sample = 1
-            while (options.outWidth / (sample * 2) >= AVATAR_EDGE && options.outHeight / (sample * 2) >= AVATAR_EDGE) sample *= 2
+            while (options.outWidth / (sample * 2) >= edge && options.outHeight / (sample * 2) >= edge) sample *= 2
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                ?.let(::circle)
         }.getOrNull()
     }
 
@@ -488,6 +498,7 @@ public object PamConversationNotifications {
     }
 
     private const val AVATAR_EDGE = 128
+    private const val PICTURE_EDGE = 720
     private const val MAX_CONVERSATIONS = 64
 }
 

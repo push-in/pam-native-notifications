@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.11 - 2026-11-18
+
+- `PushRenderingRule::color('#RRGGBB')`: Android accent of the small icon,
+  the actions and the channel lights.
+- `PushRenderingRule::largeIcon('{avatar_url}')` (conversation and standard
+  rules) and `image('{thumbnail_url}')` (standard rules, `BigPictureStyle`;
+  big text without it). HTTPS or private-file templates; failures are skipped.
+- `channel($id, $name, description:, vibrate:, lights:)`: options applied
+  when Android creates the channel.
+- `suppressInForeground()`: the rule never notifies while the app is in the
+  foreground (Android and iOS rendering).
+- Android small icon: a host drawable `pam_notification_icon` wins; otherwise
+  the app's adaptive-icon monochrome layer, cropped to its central 88 dp,
+  replaces the generic `pam_icon` glyph.
+
 ## 0.1.10 - 2026-11-18
 
 - Android 7.x: conversation notifications use the default sound and vibration for importance 2 and above, as the API 26+ channels do (8.0+ ignores builder defaults, so nothing changes there).

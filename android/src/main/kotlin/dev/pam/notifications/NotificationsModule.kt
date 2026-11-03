@@ -266,7 +266,7 @@ class NotificationReceiver : BroadcastReceiver() {
                 .setDefaults(if (importance >= 2) android.app.Notification.DEFAULT_ALL else 0)
         }
         val notification = builder
-            .setSmallIcon(notificationSmallIcon(context))
+            .setPamSmallIcon(context)
             .setContentTitle(intent.getStringExtra("title").orEmpty())
             .setContentText(intent.getStringExtra("body").orEmpty())
             .setAutoCancel(true)

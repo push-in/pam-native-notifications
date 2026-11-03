@@ -102,6 +102,24 @@ Host contract: the native side exports `PAM_NATIVE_NOTIFICATIONS_LAUNCH`
 (base64 of the `nextPushEvent` wire map with a `launch` token) before PHP
 boots, and PHP answers with `consumeLaunchNotification` once it takes it.
 
+### Presentation of rendered pushes
+
+```php
+PushRendering::forType('4')
+    ->notification('{notification_title}', '{notification_body}')
+    ->largeIcon('{actor_avatar_url}')        // circle avatar
+    ->image('{post_thumbnail_url}')          // BigPictureStyle when it loads
+    ->color('#20B8BD')                       // small icon, actions, lights
+    ->channel('messages', 'Messages', description: 'Messages and activity', vibrate: true, lights: true)
+    ->suppressInForeground()                 // only while the app is not visible
+    ->register();
+```
+
+Android fixes a channel's settings when it is first created, so the channel
+options only reach new installs (or a new channel id). The Android small icon
+is the host drawable `pam_notification_icon` when present, else the app's
+`android.icon.monochrome` layer cropped to its central 88 dp, else `pam_icon`.
+
 <a id="platform-support"></a>
 ## <picture><img src=".github/assets/icons/grid.svg" width="22" height="22" alt=""></picture> Platform support
 
