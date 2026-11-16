@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7 - 2026-11-16
+
+- Republishes 0.1.6: Packagist kept the `v0.1.6` tag on the 0.1.5 commit
+  after it was re-pointed, so `^0.1.6` installed code without
+  `takeLaunchNotification()`. No code change; require `^0.1.7`.
+
 ## 0.1.6 - 2026-11-16
 
 - `PushNotifications::takeLaunchNotification(): ?PushMessage` returns, once
