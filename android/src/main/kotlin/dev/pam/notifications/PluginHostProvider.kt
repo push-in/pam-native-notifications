@@ -13,7 +13,23 @@ class PluginHostProvider : ContentProvider() {
         PamPushNotifications.attach(app)
         PamNotificationActions.attach(app)
         HostEvents.register(object : HostEventListener {
-            override fun initialIntent(context: android.content.Context, intent: android.content.Intent?) = openedIntent(context, intent)
+            // Runs on the main thread right before PHP boots (PamActivity):
+            // a tap that cold-starts the runtime is exported for
+            // PushNotifications::takeLaunchNotification().
+            override fun initialIntent(context: android.content.Context, intent: android.content.Intent?) {
+                if (intent?.getBooleanExtra("pam.notification.opened", false) != true) {
+                    PamPushNotifications.clearLaunch()
+                    return
+                }
+                PamPushNotifications.captureLaunch(
+                    intent.getStringExtra("pam.notification.id").orEmpty(),
+                    intent.getStringExtra("pam.notification.title").orEmpty(),
+                    intent.getStringExtra("pam.notification.body").orEmpty(),
+                    intent.getStringExtra("pam.notification.data").orEmpty().ifEmpty { "{}" },
+                    intent.getStringExtra("pam.notification.deepLink").orEmpty(),
+                )
+                intent.removeExtra("pam.notification.opened")
+            }
             override fun openedIntent(context: android.content.Context, intent: android.content.Intent?) {
                 if (intent?.getBooleanExtra("pam.notification.opened", false) != true) return
                 PamPushNotifications.reportOpened(

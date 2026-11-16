@@ -15,12 +15,28 @@ use Pam\Native\Notifications\PushMessage;
 use Pam\Native\Navigation\Navigator;
 use RuntimeException;
 use LogicException;
+use Throwable;
 
+use function base64_decode;
+use function getenv;
 use function is_array;
+use function is_string;
 
 final class PushNotifications
 {
+    /**
+     * Exported by the native host before PHP boots when the process was
+     * started by a notification tap: base64 of the same wire map the
+     * `nextPushEvent` queue delivers, plus a per-launch `launch` token.
+     */
+    public const string LAUNCH_ENV = 'PAM_NATIVE_NOTIFICATIONS_LAUNCH';
+
     private static int $nextSubscription = 1;
+
+    private static bool $launchRead = false;
+
+    /** Token of the launch notification already handed to PHP (take or listener). */
+    private static ?string $launchToken = null;
 
     /** @var array<int, Closure(PushMessage): void> */
     private static array $subscriptions = [];
@@ -105,11 +121,66 @@ final class PushNotifications
         unset(self::$subscriptions[$subscription]);
     }
 
+    /**
+     * The notification whose tap started this process (an `Opened`
+     * PushMessage), read synchronously so the first frame can already show
+     * its screen: the host exports it before PHP boots, like
+     * `Linking::takeLaunchUrl()`.
+     *
+     * Returns it once per process; later calls, hot reloads and crash
+     * recoveries return null. The same tap is never delivered again by
+     * `listen()` / `listenAndRoute()`; when a listener already received it
+     * (the listener was armed first and the native queue answered), this
+     * returns null instead.
+     */
+    public static function takeLaunchNotification(): ?PushMessage
+    {
+        if (self::$launchRead) {
+            return null;
+        }
+        self::$launchRead = true;
+        $encoded = getenv(self::LAUNCH_ENV);
+        if (!is_string($encoded) || $encoded === '') {
+            return null;
+        }
+        $payload = base64_decode($encoded, true);
+        if ($payload === false || $payload === '') {
+            return null;
+        }
+        try {
+            $values = Wire::decodeMap($payload);
+            $token = (string) ($values['launch'] ?? '');
+            if ($token === '' || $token === self::$launchToken) {
+                return null;
+            }
+            $message = self::message($values);
+        } catch (Throwable) {
+            return null;
+        }
+        if ($message->event !== PushEventType::Opened) {
+            return null;
+        }
+        self::$launchToken = $token;
+        // Drops the queued copy natively and clears the exported value, so
+        // neither the queue nor a later PHP request delivers this tap again.
+        NativeModules::call(
+            'notifications',
+            'consumeLaunchNotification',
+            ['launch' => $token],
+            static function (): void {
+            },
+        );
+
+        return $message;
+    }
+
     /** @internal */
     public static function resetRuntime(): void
     {
         self::$subscriptions = [];
         self::$nextSubscription = 1;
+        self::$launchRead = false;
+        self::$launchToken = null;
     }
 
     /** @param null|Closure(PushMessage): void $callback */
@@ -139,18 +210,35 @@ final class PushNotifications
                 throw new RuntimeException($result->payload);
             }
             $values = Wire::decodeMap($result->payload);
-            $data = json_decode((string) ($values['data'] ?? '{}'), true, flags: JSON_THROW_ON_ERROR);
-            $message = new PushMessage(
-                event: PushEventType::from((int) ($values['event'] ?? 1)),
-                id: (string) ($values['id'] ?? ''),
-                title: (string) ($values['title'] ?? ''),
-                body: (string) ($values['body'] ?? ''),
-                data: is_array($data) ? $data : [],
-                deepLink: ($values['deepLink'] ?? '') !== '' ? (string) $values['deepLink'] : null,
-                rendered: (bool) ($values['rendered'] ?? false),
-            );
+            $launch = (string) ($values['launch'] ?? '');
+            if ($launch !== '') {
+                if ($launch === self::$launchToken) {
+                    // takeLaunchNotification() already returned this tap.
+                    self::arm($subscription);
+
+                    return;
+                }
+                self::$launchToken = $launch;
+            }
+            $message = self::message($values);
             self::$subscriptions[$subscription]($message);
             self::arm($subscription);
         });
+    }
+
+    /** @param array<string, string|int|float|bool> $values */
+    private static function message(array $values): PushMessage
+    {
+        $data = json_decode((string) ($values['data'] ?? '{}'), true, flags: JSON_THROW_ON_ERROR);
+
+        return new PushMessage(
+            event: PushEventType::from((int) ($values['event'] ?? 1)),
+            id: (string) ($values['id'] ?? ''),
+            title: (string) ($values['title'] ?? ''),
+            body: (string) ($values['body'] ?? ''),
+            data: is_array($data) ? $data : [],
+            deepLink: ($values['deepLink'] ?? '') !== '' ? (string) $values['deepLink'] : null,
+            rendered: (bool) ($values['rendered'] ?? false),
+        );
     }
 }

@@ -56,6 +56,10 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
                 "registerPush" -> registerPush(completion)
                 "unregisterPush" -> unregisterPush(completion)
                 "nextPushEvent" -> PamPushNotifications.next(completion)
+                "consumeLaunchNotification" -> {
+                    PamPushNotifications.consumeLaunch((WireMap.decode(payload)["launch"] as? WireValue.Text)?.value.orEmpty())
+                    completion.complete(ModuleResultStatus.SUCCESS, ByteArray(0))
+                }
                 "showConversation" -> background(completion) {
                     val spec = ConversationSpec.from(JSONObject(WireMap.decode(payload).text("spec")))
                     PamConversationNotifications.show(activity.applicationContext, spec)
