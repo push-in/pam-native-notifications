@@ -7,4 +7,5 @@ $provider = new \Pam\Native\Notifications\NotificationsPluginProvider();
 $provider->register();
 $provider->boot();
 require __DIR__.'/core-compat.php';
+require __DIR__.'/launch-notification.php';
 echo "{$assertions} assertions, 0 failures\n";

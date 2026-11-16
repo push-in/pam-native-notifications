@@ -63,6 +63,45 @@ Notifications::onAction(function (NotificationAction $action): void {
 
 Inline replies, mark-as-read and button taps performed while PHP was not running are queued natively and delivered on `onAction()`. `PushNotifications::listen()` / `listenAndRoute($navigator)` deliver received and opened pushes (`PushMessage`) and open their deep links.
 
+### Opening the tapped notification on the first frame
+
+A tap that cold-starts the app is available synchronously, before the first
+render, so the app opens straight on the conversation instead of showing its
+initial screen and navigating afterwards:
+
+```php
+use Pam\Native\Notifications\{PushMessage, PushNotifications};
+
+// While building the first screen (before the first frame):
+$launch = PushNotifications::takeLaunchNotification(); // ?PushMessage, Opened
+if ($launch !== null) {
+    $navigator->openInitial($launch->deepLink ?? routeFor($launch->data));
+}
+
+// Later taps and received pushes keep arriving asynchronously.
+PushNotifications::listen(function (PushMessage $message): void { /* ... */ });
+```
+
+- Returns the tap once per process; later calls, hot reloads and crash
+  recoveries return null.
+- The same tap is never delivered again by `listen()` / `listenAndRoute()`.
+  If a listener was armed first and already received it,
+  `takeLaunchNotification()` returns null.
+- Android: taps on notifications shown by this plugin (`Notifications::schedule()`,
+  conversations, `PushRendering`). Notifications that Firebase displays
+  itself (notification messages in the background) do not carry the plugin
+  extras and are not reported, as before.
+- iOS: hosts without a scene delegate are covered through
+  `launchOptions[.remoteNotification]`. Scene-based hosts must forward
+  `connectionOptions.notificationResponse` to
+  `PluginPushNotifications.didLaunch(response:)` before PHP boots; the PAM
+  Native host template does not do it yet, so there the tap still arrives
+  only through `listen()`.
+
+Host contract: the native side exports `PAM_NATIVE_NOTIFICATIONS_LAUNCH`
+(base64 of the `nextPushEvent` wire map with a `launch` token) before PHP
+boots, and PHP answers with `consumeLaunchNotification` once it takes it.
+
 <a id="platform-support"></a>
 ## <picture><img src=".github/assets/icons/grid.svg" width="22" height="22" alt=""></picture> Platform support
 
@@ -88,6 +127,7 @@ Ask at runtime with `Notifications::requestPermission()` before scheduling or sh
 - `Notifications::schedule()` / `cancel()`: local notifications with importance, data and deep links (id up to 128 bytes, data up to 256 KiB)
 - `Notifications::conversation()`: MessagingStyle conversation notifications with sender avatars, inline reply and mark-as-read; `cancelGroup()` forgets the history
 - `PushNotifications::register()` / `unregister()` / `listen()` / `listenAndRoute()`: FCM and APNs tokens (`PushProvider::Fcm`, `Apns`) and `Received` / `Opened` push events
+- `PushNotifications::takeLaunchNotification()`: the tap that cold-started the app, read synchronously once per process and never redelivered by `listen()`
 - `Contracts\PushRendering`: Android rules that render Firebase data-only pushes natively while PHP is suspended or not running, with reply and mark-as-read endpoints and route-based suppression
 - `Contracts\NotificationCredentials`: per-account tokens for action endpoints, sealed with an Android Keystore AES-GCM key or kept in the iOS Keychain (this device only, after first unlock)
 - Background push rendering is bounded to one worker and 64 queued messages; idle workers are released

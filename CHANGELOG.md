@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.6 - 2026-11-16
+
+- `PushNotifications::takeLaunchNotification(): ?PushMessage` returns, once
+  per process, the notification tap that cold-started the app (an `Opened`
+  `PushMessage`), synchronously, so the first frame can already show its
+  screen. The host exports it before PHP boots in
+  `PAM_NATIVE_NOTIFICATIONS_LAUNCH` (base64 of the `nextPushEvent` wire map
+  plus a per-launch `launch` token), like `Linking::takeLaunchUrl()`.
+- The same tap is delivered exactly once: when PHP takes it, the new native
+  method `consumeLaunchNotification` drops the queued copy and clears the
+  export; when `listen()` / `listenAndRoute()` receive it first,
+  `takeLaunchNotification()` returns null. Apps that only listen keep the
+  previous behaviour.
+- Android: `HostEvents.initialIntent` (before PHP boots) captures taps on the
+  plugin's notifications (`pam.notification.*` extras). Normal launches never
+  touch the environment.
+- iOS: `PluginPushNotifications.didLaunch(response:)` /
+  `didLaunch(remoteNotification:)` capture the launch tap; the delegate's
+  later copy of the same tap is not queued again. `launchOptions[.remoteNotification]`
+  is read automatically through `UIApplication.didFinishLaunchingNotification`;
+  scene-based hosts need the core to forward
+  `UIScene.ConnectionOptions.notificationResponse` before PHP boots (see the
+  README). Until then `takeLaunchNotification()` returns null there and the
+  tap still arrives through `listen()`.
+
 ## 0.1.5 - 2026-11-08
 
 - Every `v*` publication tag is certified by the PAM Native ecosystem gate
