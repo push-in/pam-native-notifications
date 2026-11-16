@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.6 - Unreleased
+## 0.1.6 - 2026-11-16
 
 - `PushNotifications::takeLaunchNotification(): ?PushMessage` returns, once
   per process, the notification tap that cold-started the app (an `Opened`
