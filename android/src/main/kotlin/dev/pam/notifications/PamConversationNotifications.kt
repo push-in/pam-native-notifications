@@ -394,6 +394,7 @@ public object PamConversationNotifications {
     }
 
     private fun ensureChannel(context: Context, spec: ConversationSpec) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return // priority(spec.importance) on 7.x
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(spec.channelId) != null) return
         val importance = when (spec.importance) {

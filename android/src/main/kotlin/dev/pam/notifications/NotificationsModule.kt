@@ -228,9 +228,11 @@ class NotificationReceiver : BroadcastReceiver() {
             4 -> NotificationManager.IMPORTANCE_MAX
             else -> NotificationManager.IMPORTANCE_DEFAULT
         }
-        manager.createNotificationChannel(
-            NotificationChannel(channelId, "Pam notifications", nativeImportance),
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Pam notifications", nativeImportance),
+            )
+        }
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             putExtra("pam.notification.opened", true)
             putExtra("pam.notification.id", intent.getStringExtra("id").orEmpty())
@@ -247,7 +249,23 @@ class NotificationReceiver : BroadcastReceiver() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
-        val notification = android.app.Notification.Builder(context, channelId)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(context, channelId)
+        } else {
+            // Android 7.x: no channels; priority and defaults stand in for importance.
+            @Suppress("DEPRECATION")
+            android.app.Notification.Builder(context)
+                .setPriority(
+                    when (importance) {
+                        1 -> android.app.Notification.PRIORITY_LOW
+                        3 -> android.app.Notification.PRIORITY_HIGH
+                        4 -> android.app.Notification.PRIORITY_MAX
+                        else -> android.app.Notification.PRIORITY_DEFAULT
+                    },
+                )
+                .setDefaults(if (importance >= 2) android.app.Notification.DEFAULT_ALL else 0)
+        }
+        val notification = builder
             .setSmallIcon(notificationSmallIcon(context))
             .setContentTitle(intent.getStringExtra("title").orEmpty())
             .setContentText(intent.getStringExtra("body").orEmpty())

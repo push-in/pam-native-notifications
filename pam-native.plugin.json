@@ -11,7 +11,7 @@
     },
     "android": {
         "namespace": "dev.pam.notifications",
-        "minSdk": 26,
+        "minSdk": 24,
         "permissions": [
             "android.permission.POST_NOTIFICATIONS"
         ],

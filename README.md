@@ -107,7 +107,7 @@ boots, and PHP answers with `consumeLaunchNotification` once it takes it.
 
 | Platform | Support | Notes |
 | --- | --- | --- |
-| Android | API 26+ | `androidx.core` 1.17.0; MessagingStyle conversations; native push rendering for Firebase data messages |
+| Android | API 24+ | `androidx.core` 1.17.0; MessagingStyle conversations; native push rendering for Firebase data messages |
 | iOS | 15.0+ | UserNotifications, UIKit, Security (Keychain) |
 | PAM Native | 1.46.0 to < 2.0.0 | From `pam-native.plugin.json`; PHP 8.5+ |
 

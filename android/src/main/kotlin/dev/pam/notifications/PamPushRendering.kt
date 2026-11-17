@@ -1,5 +1,9 @@
 package dev.pam.notifications
 
+import java.util.TimeZone
+import java.util.Locale
+import java.text.SimpleDateFormat
+import android.os.Build
 import dev.pam.nativeapp.modules.*
 
 import android.app.NotificationChannel
@@ -223,7 +227,7 @@ public object PamPushRendering {
     ): android.app.Notification {
         val channelId = rule.optString("channelId").ifBlank { "pam-push" }
         val manager = context.getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(channelId) == null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(channelId) == null) {
             manager.createNotificationChannel(
                 NotificationChannel(
                     channelId,
@@ -246,6 +250,9 @@ public object PamPushRendering {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
+            // Android 7.x has no channels: priority and defaults carry the importance.
+            .setPriority(if (rule.optInt("importance", 2) >= 3) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .apply {
                 launch?.let {
                     setContentIntent(
@@ -291,7 +298,35 @@ public object PamPushRendering {
         if (value.isEmpty()) return System.currentTimeMillis()
         value.toLongOrNull()?.let { return if (it in 1..99_999_999_999L) it * 1_000 else it }
         value.toDoubleOrNull()?.let { return (if (it < 100_000_000_000.0) it * 1_000 else it).toLong() }
-        return runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(System.currentTimeMillis())
+        val parsed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+        } else {
+            parseIsoInstant(value)
+        }
+        return parsed ?: System.currentTimeMillis()
+    }
+
+    private val ISO_INSTANT = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$""")
+
+    /** `Instant.parse` (java.time is API 26+) for Android 7.x: UTC or offset, up to nanoseconds. */
+    internal fun parseIsoInstant(value: String): Long? {
+        val match = ISO_INSTANT.matchEntire(value) ?: return null
+        val (seconds, fraction, zone) = match.destructured
+        val local = runCatching {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }.parse(seconds)?.time
+        }.getOrNull() ?: return null
+        val offsetMinutes = if (zone == "Z") {
+            0
+        } else {
+            val digits = zone.substring(1).replace(":", "")
+            val minutes = digits.substring(0, 2).toInt() * 60 + digits.substring(2).toInt()
+            if (zone[0] == '-') -minutes else minutes
+        }
+        val base = local - offsetMinutes * 60_000L
+        return base + fraction.padEnd(3, '0').take(3).toLong()
     }
 
     private const val TAG = "pam-push"

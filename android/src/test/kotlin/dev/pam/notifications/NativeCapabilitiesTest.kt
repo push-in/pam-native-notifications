@@ -73,6 +73,11 @@ class NativeCapabilitiesTest {
         assertEquals(1_700_000_000_000, PamPushRendering.timestamp("1700000000000"))
         assertEquals(1_700_000_000_500, PamPushRendering.timestamp("1700000000.5"))
         assertEquals(0L, PamPushRendering.timestamp("1970-01-01T00:00:00Z"))
+        // Android 7.x path (no java.time): same results as Instant.parse.
+        assertEquals(1_700_000_000_123, PamPushRendering.parseIsoInstant("2023-11-14T22:13:20.123456Z"))
+        assertEquals(1_700_000_000_000, PamPushRendering.parseIsoInstant("2023-11-14T19:13:20-03:00"))
+        assertEquals(1_700_000_000_000, PamPushRendering.parseIsoInstant("2023-11-15T01:13:20+0300"))
+        assertEquals(null, PamPushRendering.parseIsoInstant("yesterday"))
     }
 
 }
