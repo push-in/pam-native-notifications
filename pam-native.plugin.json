@@ -21,7 +21,8 @@
         "sourceDirs": [
             "android/src/main/kotlin"
         ],
-        "manifest": "android/src/main/AndroidManifest.xml"
+        "manifest": "android/src/main/AndroidManifest.xml",
+        "consumerRules": "android/consumer-rules.pro"
     },
     "ios": {
         "minimumVersion": "15.0",

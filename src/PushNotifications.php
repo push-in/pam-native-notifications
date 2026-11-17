@@ -18,6 +18,7 @@ use LogicException;
 use Throwable;
 
 use function base64_decode;
+use function error_log;
 use function getenv;
 use function is_array;
 use function is_string;
@@ -60,6 +61,8 @@ final class PushNotifications
             [],
             static function ($result) use ($callback, $failure): void {
                 if ($result->status === ModuleResultStatus::Failure) {
+                    // Never fail silently: callers may treat push as optional.
+                    error_log('pam-native-notifications: push token registration failed: '.$result->payload);
                     if ($failure !== null) {
                         $failure($result->payload);
 
@@ -92,6 +95,8 @@ final class PushNotifications
             [],
             static function ($result) use ($callback, $failure): void {
                 if ($result->status === ModuleResultStatus::Failure) {
+                    // Never fail silently: callers may treat push as optional.
+                    error_log('pam-native-notifications: push token unregistration failed: '.$result->payload);
                     if ($failure !== null) {
                         $failure($result->payload);
 
