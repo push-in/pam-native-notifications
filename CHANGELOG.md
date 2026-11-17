@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.8 - 2026-11-16
+
+- Fixes push registration in R8 release builds: `registerPush` /
+  `unregisterPush` reach Firebase Messaging by reflection (it stays an
+  optional host dependency), and R8 renamed `FirebaseMessaging.getToken()`,
+  `deleteToken()` and the `Task` members, so no token ever reached the app.
+  The new `android/consumer-rules.pro` (`android.consumerRules`) keeps them.
+- Native failures now name their cause (Firebase missing, a stripped member,
+  Firebase's own `Task` exception, the 15 s timeout) and the task is polled
+  every 100 ms instead of 50 ms.
+- `PushNotifications::register()` / `unregister()` log every native failure
+  with `error_log`, also when the caller passes a `$failure` callback.
+
 ## 0.1.7 - 2026-11-16
 
 - Republishes 0.1.6: Packagist kept the `v0.1.6` tag on the 0.1.5 commit
