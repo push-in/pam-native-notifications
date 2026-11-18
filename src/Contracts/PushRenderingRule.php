@@ -69,6 +69,9 @@ final class PushRenderingRule
     /** @var array{identifier: string, withoutReply: string}|null */
     private ?array $category = null;
 
+    /** @var array<string, mixed> presentation extras: color, largeIcon, image, channel options */
+    private array $style = [];
+
     public function __construct(private readonly string $type, private readonly string $field = 'type')
     {
         if ($type === '' || strlen($type) > 128) {
@@ -267,13 +270,58 @@ final class PushRenderingRule
         return $this;
     }
 
-    public function channel(string $id, string $name): self
+    /**
+     * Android channel of the notification. Channel settings are fixed by
+     * Android once created: description, vibration and lights (in the
+     * color() accent) only apply the first time the channel is created.
+     */
+    public function channel(string $id, string $name, string $description = '', bool $vibrate = false, bool $lights = false): self
     {
-        if (preg_match('/^[A-Za-z0-9_.-]{1,64}$/D', $id) !== 1 || $name === '' || strlen($name) > 128) {
-            throw new InvalidArgumentException('Notification channels need a safe id and a name up to 128 bytes.');
+        if (preg_match('/^[A-Za-z0-9_.-]{1,64}$/D', $id) !== 1 || $name === '' || strlen($name) > 128 || strlen($description) > 512) {
+            throw new InvalidArgumentException('Notification channels need a safe id, a name up to 128 bytes and a description up to 512 bytes.');
         }
         $this->channelId = $id;
         $this->channelName = $name;
+        $channel = array_filter(['description' => $description, 'vibrate' => $vibrate, 'lights' => $lights], static fn (mixed $value): bool => $value !== '' && $value !== false);
+        if ($channel === []) {
+            unset($this->style['channel']);
+        } else {
+            $this->style['channel'] = $channel;
+        }
+
+        return $this;
+    }
+
+    /** Android accent color (#RRGGBB) of the small icon, the actions and the channel lights. */
+    public function color(string $hex): self
+    {
+        if (preg_match('/^#[0-9A-Fa-f]{6}$/D', $hex) !== 1) {
+            throw new InvalidArgumentException('Notification colors must be #RRGGBB.');
+        }
+        $this->style['color'] = strtoupper($hex);
+
+        return $this;
+    }
+
+    /**
+     * Android large icon (an HTTPS or private-file image template, e.g. the
+     * sender avatar), drawn as a circle. Missing or failing images are skipped.
+     */
+    public function largeIcon(string $template): self
+    {
+        $this->style['largeIcon'] = self::template($template);
+
+        return $this;
+    }
+
+    /**
+     * Android big picture of a notification() rule (HTTPS or private-file
+     * image template, e.g. the post thumbnail); without it the body expands
+     * as big text.
+     */
+    public function image(string $template): self
+    {
+        $this->style['image'] = self::template($template);
 
         return $this;
     }
@@ -302,6 +350,20 @@ final class PushRenderingRule
             ];
         }
         PushRendering::trackRoutes();
+
+        return $this;
+    }
+
+    /**
+     * Skip the notification whenever the app is in the foreground, e.g.
+     * social activity the open app already shows. Rules without it still
+     * notify in the foreground unless suppressWhenRoute() matches.
+     */
+    public function suppressInForeground(): self
+    {
+        if (!in_array(['foreground' => true], $this->suppress, true)) {
+            $this->suppress[] = ['foreground' => true];
+        }
 
         return $this;
     }
@@ -363,6 +425,7 @@ final class PushRenderingRule
             'replyFailures' => $this->replyFailures?->toArray(),
             'actions' => $this->actions,
             'category' => $this->category,
+            'style' => (object) $this->style,
         ];
     }
 

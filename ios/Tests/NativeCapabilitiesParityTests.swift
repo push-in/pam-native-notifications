@@ -133,6 +133,15 @@ final class NativeCapabilitiesParityTests: XCTestCase {
         XCTAssertFalse(PamActiveRoute.matches([["path": "/chats/{other}"]], variables))
     }
 
+    func testForegroundSuppressionMatchesAnyRouteOnlyWhileActive() {
+        PamActiveRoute.update(name: "feed", paramsJson: "{}", path: "/feed")
+        let rules: [[String: Any]] = [["foreground": true]]
+        PamActiveRoute.foregroundOverride = false
+        XCTAssertFalse(PamActiveRoute.matches(rules, [:]))
+        PamActiveRoute.foregroundOverride = true
+        XCTAssertTrue(PamActiveRoute.matches(rules, [:]))
+    }
+
     func testPushRenderingRuleSuppressedForOpenConversation() throws {
         try PamPushRendering.register(#"""
         {"type":"message","kind":1,"field":"type",

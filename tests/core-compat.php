@@ -241,6 +241,32 @@ $assert(
         && $rule['channelId'] === 'messages',
     'PushRendering must persist a declarative conversation rule.',
 );
+$assert($rule['style'] === [], 'Rules without presentation extras must send an empty style.');
+PushRendering::forType('4')
+    ->notification('{notification_title}', '{notification_body}')
+    ->channel('messages', 'Mensagens', description: 'Mensagens e avisos', vibrate: true, lights: true)
+    ->color('#20b8bd')
+    ->largeIcon('{actor_avatar_url}')
+    ->image('{post_thumbnail_url}')
+    ->suppressInForeground()
+    ->suppressInForeground()
+    ->register();
+$rule = json_decode((string) $lastCall()['values']['rule'], true);
+$assert(
+    $rule['style'] === [
+        'channel' => ['description' => 'Mensagens e avisos', 'vibrate' => true, 'lights' => true],
+        'color' => '#20B8BD',
+        'largeIcon' => '{actor_avatar_url}',
+        'image' => '{post_thumbnail_url}',
+    ] && $rule['suppress'] === [['foreground' => true]] && $rule['channelId'] === 'messages',
+    'Rules must carry the accent color, large icon, big picture, channel options and foreground suppression.',
+);
+$assert(
+    $rejects(static fn () => PushRendering::forType('4')->notification()->color('20B8BD'))
+        && $rejects(static fn () => PushRendering::forType('4')->notification()->color('#20B8B'))
+        && $rejects(static fn () => PushRendering::forType('4')->notification()->channel('a', 'b', description: str_repeat('x', 513))),
+    'Colors and channel descriptions must be validated.',
+);
 PushRendering::forType('chat.read')->dismissConversation('{chat_id}')->register();
 $assert(json_decode((string) $lastCall()['values']['rule'], true)['kind'] === 3, 'PushRendering must support dismiss rules.');
 $assert(
