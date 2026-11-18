@@ -1,5 +1,6 @@
 package dev.pam.notifications
 
+import androidx.core.content.edit
 import dev.pam.nativeapp.modules.*
 
 import android.content.Context
@@ -38,14 +39,14 @@ public object PamNotificationCredentials {
     internal fun set(context: Context, account: String, token: String) {
         val (key, value) = sealedEntry(account, token)
         synchronized(lock) {
-            preferences(context).edit().putString(key, value).commit()
+            preferences(context).edit(commit = true) { putString(key, value) }
         }
     }
 
     internal fun remove(context: Context, account: String) {
         val id = normalize(account)
         if (id.isEmpty()) return
-        synchronized(lock) { preferences(context).edit().remove(slot(id)).commit() }
+        synchronized(lock) { preferences(context).edit(commit = true) { remove(slot(id)) } }
     }
 
     /** Replaces every stored credential with [tokens] (account id to token). */
@@ -55,10 +56,10 @@ public object PamNotificationCredentials {
         // leaves the previous credentials intact instead of a half-written set.
         val entries = tokens.map { (account, token) -> sealedEntry(account, token) }
         synchronized(lock) {
-            preferences(context).edit().apply {
+            preferences(context).edit(commit = true) {
                 clear()
                 entries.forEach { (key, value) -> putString(key, value) }
-            }.commit()
+            }
         }
     }
 
@@ -73,7 +74,7 @@ public object PamNotificationCredentials {
     }
 
     internal fun clear(context: Context) {
-        synchronized(lock) { preferences(context).edit().clear().commit() }
+        synchronized(lock) { preferences(context).edit(commit = true) { clear() } }
     }
 
     /** The token of [account], or null when that account has none on this device. */

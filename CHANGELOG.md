@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10 - 2026-11-18
+
+- Android 7.x: conversation notifications use the default sound and vibration for importance 2 and above, as the API 26+ channels do (8.0+ ignores builder defaults, so nothing changes there).
+- Android lint is clean at minSdk 24 (`NewApi` included): `SharedPreferences` edits go through the KTX `edit {}` (same apply/commit), and the `POST_NOTIFICATIONS` and host-icon lookups carry justified suppressions.
+- Added a standalone Gradle harness (`android/settings.gradle.kts`, `android/build.gradle.kts`) for lint, the unit tests and the instrumented tests; local notifications, conversations, inline replies and push rendering pass on API 24 and API 35 emulators. PAM applications ignore it.
+
 ## 0.1.9 - 2026-11-17
 
 - Android 7.0/7.1 support: the plugin declares minSdk 24 and every newer Android API it uses has a version check and fallback. Requires PAM Native 1.53.1 or later.

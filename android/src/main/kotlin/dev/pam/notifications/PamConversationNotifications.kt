@@ -1,5 +1,8 @@
 package dev.pam.notifications
 
+import android.annotation.SuppressLint
+import androidx.core.graphics.createBitmap
+import androidx.core.content.edit
 import dev.pam.nativeapp.modules.*
 
 import android.app.NotificationChannel
@@ -239,7 +242,7 @@ public object PamConversationNotifications {
 
     internal fun cancel(context: Context, key: String) {
         synchronized(lock) {
-            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().remove(key).apply()
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit { remove(key) }
         }
         NotificationManagerCompat.from(context).cancel(key, NOTIFICATION_ID)
     }
@@ -252,10 +255,11 @@ public object PamConversationNotifications {
 
     private fun store(context: Context, spec: ConversationSpec) {
         val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        val editor = preferences.edit().putString(spec.key, spec.toJson().toString())
         val keys = preferences.all.keys - spec.key
-        if (keys.size >= MAX_CONVERSATIONS) keys.take(keys.size - MAX_CONVERSATIONS + 1).forEach(editor::remove)
-        editor.apply()
+        preferences.edit {
+            putString(spec.key, spec.toJson().toString())
+            if (keys.size >= MAX_CONVERSATIONS) keys.take(keys.size - MAX_CONVERSATIONS + 1).forEach { remove(it) }
+        }
     }
 
     internal fun build(context: Context, spec: ConversationSpec): NotificationCompat.Builder {
@@ -289,6 +293,9 @@ public object PamConversationNotifications {
             .setAutoCancel(true)
             .setOnlyAlertOnce(spec.silent)
             .setPriority(priority(spec.importance))
+            // Android 7.x has no channels: sound and vibration come from the defaults
+            // (ignored on 8.0+, where the channel decides).
+            .setDefaults(if (spec.importance >= 2) NotificationCompat.DEFAULT_ALL else 0)
             .setGroup("pam-conversation-${spec.key}")
             .setWhen(spec.messages.lastOrNull()?.timestamp ?: System.currentTimeMillis())
             .setShowWhen(true)
@@ -359,6 +366,8 @@ public object PamConversationNotifications {
         return builder
     }
 
+    // canPostNotifications checks POST_NOTIFICATIONS (API 33+) and SecurityException is caught.
+    @SuppressLint("MissingPermission")
     private fun post(context: Context, spec: ConversationSpec) {
         val manager = NotificationManagerCompat.from(context)
         if (!canPostNotifications(context, manager)) return
@@ -466,7 +475,7 @@ public object PamConversationNotifications {
 
     private fun circle(source: Bitmap): Bitmap {
         val edge = minOf(source.width, source.height, AVATAR_EDGE * 2)
-        val output = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+        val output = createBitmap(edge, edge)
         val canvas = Canvas(output)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         canvas.drawOval(0f, 0f, edge.toFloat(), edge.toFloat(), paint)

@@ -1,5 +1,7 @@
 package dev.pam.notifications
 
+import android.annotation.SuppressLint
+import androidx.core.content.edit
 import java.util.TimeZone
 import java.util.Locale
 import java.text.SimpleDateFormat
@@ -82,14 +84,15 @@ public object PamPushRendering {
         val type = rule.getString("type")
         require(type.isNotBlank() && type.length <= 128) { "Push rendering type is invalid" }
         require(rule.optInt("kind") in KIND_CONVERSATION..KIND_DISMISS) { "Push rendering kind is invalid" }
-        preferences(context).edit().putString(key(rule.optString("field", "type"), type, rule.optJSONObject("where"), rule.optJSONArray("requires")), rule.toString()).apply()
+        preferences(context).edit {
+            putString(key(rule.optString("field", "type"), type, rule.optJSONObject("where"), rule.optJSONArray("requires")), rule.toString())
+        }
     }
 
     internal fun forget(context: Context, field: String, type: String) {
         val prefix = key(field, type, null, null)
-        val editor = preferences(context).edit()
-        preferences(context).all.keys.filter { it == prefix || it.startsWith(prefix + "\u0000") }.forEach(editor::remove)
-        editor.apply()
+        val keys = preferences(context).all.keys.filter { it == prefix || it.startsWith(prefix + "\u0000") }
+        preferences(context).edit { keys.forEach { remove(it) } }
     }
 
     /** The registered rule for this push: type field plus every `where` condition; the most specific wins. */
@@ -110,7 +113,7 @@ public object PamPushRendering {
             .maxByOrNull { (it.optJSONObject("where")?.length() ?: 0) + (it.optJSONArray("requires")?.length() ?: 0) }
 
     internal fun clear(context: Context) {
-        preferences(context).edit().clear().apply()
+        preferences(context).edit { clear() }
     }
 
     /** Returns true when a rule rendered (or intentionally dismissed) the push. */
@@ -196,6 +199,8 @@ public object PamPushRendering {
         return false
     }
 
+    // canPostNotifications checks POST_NOTIFICATIONS (API 33+) and SecurityException is caught.
+    @SuppressLint("MissingPermission")
     private fun notify(
         context: Context,
         rule: JSONObject,

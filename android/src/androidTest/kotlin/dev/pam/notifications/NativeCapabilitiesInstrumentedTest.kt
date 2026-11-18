@@ -2,6 +2,9 @@ package dev.pam.notifications
 
 import dev.pam.nativeapp.modules.*
 import android.content.Context
+import androidx.core.app.NotificationManagerCompat
+import android.os.Build
+import android.app.NotificationManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -11,7 +14,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.pam.nativeapp.CapabilityTestActivity
 import dev.pam.nativeapp.protocol.WireMap
 import dev.pam.nativeapp.protocol.WireValue
 import java.io.ByteArrayOutputStream
@@ -37,6 +39,49 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesInstrumentedTest {
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test
+    fun localNotificationIsPostedOnEveryApiLevel() {
+        // Android 7.x has no channels: the receiver falls back to priority and defaults.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation
+                .grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val id = "local-${UUID.randomUUID()}"
+        for (importance in 1..4) {
+            NotificationReceiver().onReceive(
+                context,
+                Intent(context, NotificationReceiver::class.java)
+                    .putExtra("id", "$id-$importance")
+                    .putExtra("title", "Olá")
+                    .putExtra("body", "Importância $importance")
+                    .putExtra("importance", importance),
+            )
+        }
+        try {
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+            val expected = (1..4).map { "$id-$it".hashCode() }.toSet()
+            val deadline = System.currentTimeMillis() + 5_000
+            var posted = emptySet<Int>()
+            while (System.currentTimeMillis() < deadline) {
+                posted = manager.activeNotifications.map { it.id }.filter { it in expected }.toSet()
+                if (posted == expected) break
+                Thread.sleep(50)
+            }
+            assertEquals(expected, posted)
+            val high = manager.activeNotifications.first { it.id == "$id-3".hashCode() }.notification
+            assertEquals("Olá", high.extras.getString(android.app.Notification.EXTRA_TITLE))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                assertEquals("pam-native-3", high.channelId)
+            } else {
+                @Suppress("DEPRECATION")
+                assertEquals(android.app.Notification.PRIORITY_HIGH, high.priority)
+            }
+        } finally {
+            (1..4).forEach { manager.cancel("$id-$it".hashCode()) }
+        }
+    }
     @Test
     fun conversationNotificationsUseMessagingStyleRepliesAndHistory() {
         val key = "chat:${UUID.randomUUID()}"
@@ -440,29 +485,25 @@ class NativeCapabilitiesInstrumentedTest {
     }
 
     @Test
-    fun imagePrefetchWarmsTheRendererDiskCache() {
+    fun avatarsReadTheRendererDiskCacheBeforeTheNetwork() {
+        // The host's image prefetch stores remote images under pam-images-v1 by
+        // the SHA-256 of their URL; a cached avatar is drawn without a request.
         val png = ByteArrayOutputStream().also {
             Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, it)
         }.toByteArray()
+        val url = "http://127.0.0.1:9/avatar-${UUID.randomUUID()}.png"
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val cached = File(File(context.cacheDir, "pam-images-v1").apply { mkdirs() }, "$digest.image")
+        cached.writeBytes(png)
+        try {
+            assertNotNull(PamConversationNotifications.avatar(context, url))
+        } finally {
+            cached.delete()
+        }
         LocalServer(response = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${png.size}\r\n\r\n", body = png).use { server ->
-            val url = "http://127.0.0.1:${server.port}/avatar-${UUID.randomUUID()}.png"
-            val module = ImagePrefetchModule(context)
-            try {
-                val result = call(module, "prefetch", mapOf(
-                    "urls" to WireValue.Text(JSONArray().put(url).toString()),
-                    "priority" to WireValue.Integer(4),
-                ))
-                assertEquals(WireValue.Integer(1), result["succeeded"])
-                assertEquals(WireValue.Integer(png.size.toLong()), result["bytes"])
-                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
-                    .joinToString("") { "%02x".format(it) }
-                val cached = File(File(context.cacheDir, "pam-images-v1"), "$digest.image")
-                assertTrue(cached.isFile)
-                assertNotNull(PamConversationNotifications.avatar(context, url))
-                cached.delete()
-            } finally {
-                module.close()
-            }
+            assertNotNull(PamConversationNotifications.avatar(context, "http://127.0.0.1:${server.port}/avatar-${UUID.randomUUID()}.png"))
+            server.request()
         }
     }
 
