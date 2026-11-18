@@ -3,9 +3,9 @@ package dev.pam.notifications
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.graphics.Color
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.toColorInt
 import org.json.JSONObject
 
 /**
@@ -27,7 +27,7 @@ internal object PamNotificationStyle {
     }
 
     fun color(style: JSONObject?): Int? =
-        style?.optString("color")?.takeIf { COLOR.matches(it) }?.let { runCatching { Color.parseColor(it) }.getOrNull() }
+        style?.optString("color")?.takeIf { COLOR.matches(it) }?.let { runCatching { it.toColorInt() }.getOrNull() }
 
     /** Accent color and large icon; image loading stays on the push worker thread. */
     fun decorate(context: Context, builder: NotificationCompat.Builder, style: JSONObject?) {
