@@ -144,6 +144,14 @@ Requires `pushinbr/pam-native` ^1.46. The core keeps deprecated PHP aliases thro
 pam composer test     # php tests/run.php
 ```
 
+Android (lint, unit and instrumented tests at minSdk 24, with a pam-native checkout for `plugin-api`):
+
+```bash
+cd android
+../../pam-native/android/gradlew -p . -PpamNativeAndroid=../../pam-native/android \
+  lint testDebugUnitTest connectedDebugAndroidTest
+```
+
 <a id="docs"></a>
 ## <picture><img src=".github/assets/icons/book.svg" width="22" height="22" alt=""></picture> Docs
 

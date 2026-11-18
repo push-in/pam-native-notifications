@@ -1,5 +1,6 @@
 package dev.pam.notifications
 
+import androidx.core.content.edit
 import dev.pam.nativeapp.modules.*
 
 import android.content.Context
@@ -241,7 +242,7 @@ public object PamPushNotifications {
         events.forEach { payload ->
             encoded.put(Base64.encodeToString(payload, Base64.NO_WRAP))
         }
-        storage.edit().putString(PREFERENCES_EVENTS, encoded.toString()).apply()
+        storage.edit { putString(PREFERENCES_EVENTS, encoded.toString()) }
     }
 
     /** `PushNotifications::LAUNCH_ENV`. */

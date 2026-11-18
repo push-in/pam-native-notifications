@@ -1,5 +1,6 @@
 package dev.pam.notifications
 
+import androidx.core.content.edit
 import dev.pam.nativeapp.modules.*
 
 import android.content.Context
@@ -264,7 +265,7 @@ public object PamNotificationActions {
         val storage = preferences ?: return
         val encoded = JSONArray()
         events.forEach { encoded.put(Base64.encodeToString(it, Base64.NO_WRAP)) }
-        storage.edit().putString(PREFERENCES_EVENTS, encoded.toString()).apply()
+        storage.edit { putString(PREFERENCES_EVENTS, encoded.toString()) }
     }
 
     private const val MAX_QUEUED_EVENTS = 64
