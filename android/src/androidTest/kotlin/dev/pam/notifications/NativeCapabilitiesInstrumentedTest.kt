@@ -507,6 +507,44 @@ class NativeCapabilitiesInstrumentedTest {
         }
     }
 
+    @Test
+    fun requestPermissionBelowAndroid13FollowsTheAppNotificationSwitch() {
+        // Android 13+ answers through the POST_NOTIFICATIONS runtime prompt instead.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(context, HarnessLauncherActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        val module = NotificationsModule(activity)
+        fun granted() = (call(module, "requestPermission", emptyMap())["granted"] as WireValue.Flag).value
+        fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).close()
+        try {
+            assertEquals(NotificationManagerCompat.from(context).areNotificationsEnabled(), granted())
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                // Android 7.x keeps the app's notification switch in the POST_NOTIFICATION app op.
+                shell("appops set ${context.packageName} POST_NOTIFICATION ignore")
+                try {
+                    val deadline = System.currentTimeMillis() + 5_000
+                    while (NotificationManagerCompat.from(context).areNotificationsEnabled() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50)
+                    }
+                    assertFalse(NotificationManagerCompat.from(context).areNotificationsEnabled())
+                    assertFalse("notifications switched off are not granted", granted())
+                } finally {
+                    shell("appops set ${context.packageName} POST_NOTIFICATION allow")
+                }
+                val deadline = System.currentTimeMillis() + 5_000
+                while (!NotificationManagerCompat.from(context).areNotificationsEnabled() && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(50)
+                }
+                assertTrue(granted())
+            }
+        } finally {
+            module.retireSurface()
+            activity.finish()
+        }
+    }
+
     private fun call(module: NativeModule, method: String, values: Map<String, WireValue>): Map<String, WireValue> {
         val latch = CountDownLatch(1)
         val status = AtomicReference<ModuleResultStatus>()

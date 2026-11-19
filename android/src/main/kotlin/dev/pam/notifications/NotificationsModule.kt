@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.app.Activity
+import androidx.core.app.NotificationManagerCompat
 import dev.pam.nativeapp.PermissionHost
 import dev.pam.nativeapp.protocol.WireMap
 import dev.pam.nativeapp.protocol.WireValue
@@ -151,7 +152,9 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
 
     private fun requestPermission(completion: ModuleCompletion) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            completion.permission(true)
+            // No runtime prompt below Android 13: the app's notification switch is the answer
+            // (off means blocked; only Settings can turn it back on).
+            completion.permission(NotificationManagerCompat.from(activity).areNotificationsEnabled())
             return
         }
         (activity as PermissionHost).requestPamPermission(Manifest.permission.POST_NOTIFICATIONS) {

@@ -192,6 +192,7 @@ push rendered with the app closed writes nothing to disk. Call
 | iOS | No usage description; notification authorization is requested at runtime |
 
 Ask at runtime with `Notifications::requestPermission()` before scheduling or showing notifications.
+Below Android 13 there is no prompt: the callback reports whether the app's notifications are switched on (`false` when the user turned them off; only the system Settings can turn them back on).
 
 <a id="capabilities"></a>
 ## <picture><img src=".github/assets/icons/bell.svg" width="22" height="22" alt=""></picture> Capabilities
