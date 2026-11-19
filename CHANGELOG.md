@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.13 - 2026-11-19
+
+- Fixed: Android below 13: Notifications::requestPermission() reports areNotificationsEnabled() instead of always true (false when the user switched notifications off).
+
 ## 0.1.12 - 2026-11-18
 
 - Added: PushRenderingRule::openAction() (foreground button: deep link, optional native endpoint, extra data, dismiss).
