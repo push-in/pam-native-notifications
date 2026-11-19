@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.12 - 2026-11-18
+
+- Added: PushRenderingRule::openAction() (foreground button: deep link, optional native endpoint, extra data, dismiss).
+- Fixed: conversation rules now render their action() buttons on Android.
+- Added: alertOnce() (default on for conversations and keyed rules), key() and subText() on push rendering rules, ConversationNotification::alertOnce().
+- Added: suppressInForeground(where:, blank:) conditions.
+- Added: PushNotifications::persistRenderedEvents().
+- Fixed: a dismissed conversation no longer brings back its old history.
+- Changed: avatar downloads are written to pam-images-v1 and memoized, with 1.5 s / 2 s timeouts.
+- Changed: rendered push events are no longer written to disk.
+
 ## 0.1.11 - 2026-11-18
 
 - `PushRenderingRule::color('#RRGGBB')`: Android accent of the small icon,
