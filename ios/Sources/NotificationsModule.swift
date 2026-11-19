@@ -306,6 +306,9 @@ public final class NotificationsModule: NativeModule, ClosableNativeModule {
                 }
             case "nextPushEvent":
                 PushTokenRegistry.shared.nextEvent(completion: completion)
+            case "configurePushEvents":
+                // iOS keeps push events in memory only already.
+                completion(.success, Data())
             case "consumeLaunchNotification":
                 let values = try WireMap.decode(payload)
                 if case let .text(token)? = values["launch"] {

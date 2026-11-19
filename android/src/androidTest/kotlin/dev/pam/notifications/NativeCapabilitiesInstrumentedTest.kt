@@ -524,6 +524,171 @@ class NativeCapabilitiesInstrumentedTest {
     private class Request(val head: String, val body: ByteArray)
 
     /** One-shot HTTP/1.1 server that records the request and replies with a fixed response. */
+    private fun grantNotifications() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    private fun active(tag: String): List<android.service.notification.StatusBarNotification> =
+        context.getSystemService(NotificationManager::class.java).activeNotifications.filter { it.tag == tag }
+
+    @Test
+    fun conversationRuleShowsBackgroundAndOpenButtonsAndAlertsOnce() {
+        grantNotifications()
+        val rule = JSONObject()
+            .put("type", "1").put("field", "type").put("kind", PamPushRendering.KIND_CONVERSATION)
+            .put("where", JSONObject().put("message_type", "game_invite"))
+            .put("conversation", JSONObject().put("key", "{chat_id}").put("title", "{chat_name}"))
+            .put("message", JSONObject().put("sender", "{sender_name}").put("text", "{body}"))
+            .put("deepLink", "pushin://chat/{chat_id}")
+            .put(
+                "actions",
+                JSONArray()
+                    .put(JSONObject().put("id", "decline").put("label", "Recusar").put("dismiss", true).put("endpoint", JSONObject().put("method", "POST").put("url", "http://127.0.0.1:9/decline")))
+                    .put(JSONObject().put("id", "accept").put("label", "Aceitar").put("open", true).put("dismiss", true).put("data", JSONObject().put("game_invite_action", "1")).put("deepLink", "pushin://game-challenge/{invite_id}")),
+            )
+        PamPushRendering.register(context, rule.toString())
+        val chat = "g${UUID.randomUUID().toString().take(8)}"
+        try {
+            PamActiveRoute.setForeground(false)
+            val data = JSONObject().put("type", "1").put("message_type", "game_invite").put("chat_id", chat).put("chat_name", "Ana")
+                .put("sender_name", "Ana").put("body", "Desafio").put("invite_id", "77")
+            assertTrue(PamPushRendering.render(context, "p1", "", "", data.toString()))
+            val posted = active(chat).single().notification
+            assertEquals(listOf("Recusar", "Aceitar"), posted.actions.map { it.title.toString() })
+            assertTrue("conversations alert once", posted.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
+            if (Build.VERSION.SDK_INT >= 31) {
+                assertTrue(posted.actions[1].actionIntent.isActivity)
+                assertTrue(posted.actions[0].actionIntent.isBroadcast)
+            }
+            val stored = PamConversationNotifications.load(context, chat)!!.buttons!!.getJSONObject(1)
+            assertEquals("pushin://game-challenge/77", stored.getString("deepLink"))
+            assertEquals("1", stored.getJSONObject("data").getString("game_invite_action"))
+            // The tap delivered to the app carries the merged data, then removes the conversation.
+            val tap = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
+                .putExtra(PamNotificationButtons.EXTRA_DISMISS_CONVERSATION, chat)
+            PamNotificationButtons.handleOpen(context, tap)
+            Thread.sleep(300)
+            assertTrue(active(chat).isEmpty())
+            assertNull(PamConversationNotifications.load(context, chat))
+        } finally {
+            PamPushRendering.clear(context)
+            PamConversationNotifications.cancel(context, chat)
+        }
+    }
+
+    @Test
+    fun dismissedConversationStartsAgainWithoutTheOldHistory() {
+        grantNotifications()
+        val key = "d${UUID.randomUUID().toString().take(8)}"
+        val previousSettle = PamConversationNotifications.postSettleMillis
+        PamConversationNotifications.postSettleMillis = 0
+        fun message(id: String) = ConversationSpec(
+            key = key,
+            messages = listOf(ConversationMessage(id, "texto $id", System.currentTimeMillis(), ConversationPerson("Ana"))),
+        )
+        try {
+            PamConversationNotifications.show(context, message("a"))
+            Thread.sleep(500)
+            assertEquals(listOf("a", "b"), PamConversationNotifications.show(context, message("b")).messages.map { it.id })
+            // Swiped away: the stored history stays, but the next message starts fresh.
+            NotificationManagerCompat.from(context).cancel(key, PamConversationNotifications.NOTIFICATION_ID)
+            Thread.sleep(500)
+            assertEquals(listOf("c"), PamConversationNotifications.show(context, message("c")).messages.map { it.id })
+        } finally {
+            PamConversationNotifications.postSettleMillis = previousSettle
+            PamConversationNotifications.cancel(context, key)
+        }
+    }
+
+    @Test
+    fun keyedNotificationReplacesThePreviousOneWithItsSubText() {
+        grantNotifications()
+        val thread = "post_${UUID.randomUUID().toString().take(6)}"
+        val rule = JSONObject()
+            .put("type", "3").put("field", "type").put("kind", PamPushRendering.KIND_NOTIFICATION)
+            .put("title", "{title}").put("body", "{body}").put("key", "{user_id}:{thread_id}").put("subText", "{notification_subtitle}")
+        PamPushRendering.register(context, rule.toString())
+        val tag = "pam-push:u1:$thread"
+        try {
+            PamActiveRoute.setForeground(false)
+            val data = JSONObject().put("type", "3").put("user_id", "u1").put("thread_id", thread).put("title", "Ana curtiu").put("body", "Seu post").put("notification_subtitle", "Curtida")
+            assertTrue(PamPushRendering.render(context, "m1", "", "", data.toString()))
+            assertTrue(PamPushRendering.render(context, "m2", "", "", data.put("title", "Bia curtiu").toString()))
+            Thread.sleep(300)
+            val posted = active(tag)
+            assertEquals(1, posted.size)
+            assertEquals("Bia curtiu", posted[0].notification.extras.getString(android.app.Notification.EXTRA_TITLE))
+            assertEquals("Curtida", posted[0].notification.extras.getCharSequence(android.app.Notification.EXTRA_SUB_TEXT)?.toString())
+            assertTrue(posted[0].notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        } finally {
+            PamPushRendering.clear(context)
+            NotificationManagerCompat.from(context).cancel(tag, 0x50414e)
+        }
+    }
+
+    @Test
+    fun downloadedAvatarIsWrittenToTheImageCacheAndReused() {
+        val png = ByteArrayOutputStream().also { Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF3366CC.toInt()) }.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        LocalServer(response = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${png.size}\r\nConnection: close\r\n\r\n", body = png).use { server ->
+            val url = "http://127.0.0.1:${server.port}/avatar-${UUID.randomUUID()}.png"
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+            val cached = File(File(context.cacheDir, "pam-images-v1"), "$digest.image")
+            try {
+                assertNotNull(PamConversationNotifications.avatar(context, url))
+                server.request()
+                assertTrue("download written to the disk cache", cached.isFile && cached.length() == png.size.toLong())
+                // The server served its only request: the next loads come from memory / disk.
+                assertNotNull(PamConversationNotifications.avatar(context, url))
+                assertNotNull(PamConversationNotifications.picture(context, url))
+            } finally {
+                cached.delete()
+            }
+        }
+    }
+
+    @Test
+    fun renderedPushEventsStayInMemoryUnlessTheAppAsksToPersistThem() {
+        val preferences = context.getSharedPreferences("pam-native-push", Context.MODE_PRIVATE)
+        PamPushNotifications.attach(context)
+        PamPushNotifications.persistRendered(context, false)
+        val marker = "rendered-${UUID.randomUUID()}"
+        try {
+            PamPushNotifications.reportRendered(marker)
+            val stored = preferences.getString("events", "[]")!!
+            assertFalse("rendered push persisted", JSONArray(stored).let { array -> (0 until array.length()).any { decode(array.getString(it)).contains(marker) } })
+            val received = "received-${UUID.randomUUID()}"
+            PamPushNotifications.reportReceived(received)
+            val after = JSONArray(preferences.getString("events", "[]")!!)
+            assertTrue("unrendered push persisted", (0 until after.length()).any { decode(after.getString(it)).contains(received) })
+            PamPushNotifications.persistRendered(context, true)
+            val kept = "kept-${UUID.randomUUID()}"
+            PamPushNotifications.reportRendered(kept)
+            val opted = JSONArray(preferences.getString("events", "[]")!!)
+            assertTrue("opt-in persists rendered pushes", (0 until opted.length()).any { decode(opted.getString(it)).contains(kept) })
+        } finally {
+            PamPushNotifications.persistRendered(context, false)
+            drainPushEvents()
+        }
+    }
+
+    private fun decode(encoded: String): String =
+        String(android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP), Charsets.ISO_8859_1)
+
+    private fun drainPushEvents() {
+        while (true) {
+            val got = AtomicReference<Boolean>(false)
+            PamPushNotifications.next(ModuleCompletion { _, _ -> got.set(true) })
+            if (!got.get()) {
+                PamPushNotifications.prepareReload()
+                return
+            }
+        }
+    }
+
     private class LocalServer(response: String, body: ByteArray = ByteArray(0)) : AutoCloseable {
         private val socket = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).apply { soTimeout = 20_000 }
         private val received = AtomicReference<Request>()

@@ -121,6 +121,21 @@ final class PushNotifications
         return $subscription;
     }
 
+    /**
+     * Android: pushes that a PushRendering rule already displayed are queued
+     * for `listen()` in memory only, so rendering one with the app closed
+     * writes nothing to disk and a later process does not replay it (its
+     * `Received` event is lost when the process dies before PHP runs).
+     * Pass true when the app needs those `rendered` events after a restart
+     * (e.g. to count unread pushes). Pushes no rule rendered (calls, custom
+     * handling) are always kept durably. Persisted natively; no-op on iOS.
+     */
+    public static function persistRenderedEvents(bool $persist = true): void
+    {
+        NativeModules::call('notifications', 'configurePushEvents', ['persistRendered' => $persist], static function (): void {
+        });
+    }
+
     public static function unsubscribe(int $subscription): void
     {
         unset(self::$subscriptions[$subscription]);

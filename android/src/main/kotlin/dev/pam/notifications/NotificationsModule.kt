@@ -56,6 +56,11 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
                 "registerPush" -> registerPush(completion)
                 "unregisterPush" -> unregisterPush(completion)
                 "nextPushEvent" -> PamPushNotifications.next(completion)
+                "configurePushEvents" -> {
+                    val persist = (WireMap.decode(payload)["persistRendered"] as? WireValue.Flag)?.value ?: false
+                    PamPushNotifications.persistRendered(activity.applicationContext, persist)
+                    completion.complete(ModuleResultStatus.SUCCESS, ByteArray(0))
+                }
                 "consumeLaunchNotification" -> {
                     PamPushNotifications.consumeLaunch((WireMap.decode(payload)["launch"] as? WireValue.Text)?.value.orEmpty())
                     completion.complete(ModuleResultStatus.SUCCESS, ByteArray(0))

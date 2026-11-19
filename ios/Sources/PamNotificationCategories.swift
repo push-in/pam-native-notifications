@@ -126,7 +126,14 @@ public enum PamNotificationCategories {
             guard identifier.hasPrefix(buttonPrefix) else { return nil }
             let id = String(identifier.dropFirst(buttonPrefix.count))
             let button = ((rule["actions"] as? [[String: Any]]) ?? []).first { ($0["id"] as? String) == id }
-            return button.map { UNNotificationAction(identifier: identifier, title: ($0["label"] as? String) ?? id, options: []) }
+            // Open buttons (PushRenderingRule::openAction) bring the app forward.
+            return button.map {
+                UNNotificationAction(
+                    identifier: identifier,
+                    title: ($0["label"] as? String) ?? id,
+                    options: (($0["open"] as? Bool) ?? false) ? [.foreground] : []
+                )
+            }
         }
     }
 
@@ -209,6 +216,41 @@ public enum PamNotificationCategories {
             let id = String(response.actionIdentifier.dropFirst(buttonPrefix.count))
             guard let button = ((rule["actions"] as? [[String: Any]]) ?? []).first(where: { ($0["id"] as? String) == id }) else {
                 completion()
+                return true
+            }
+            if (button["open"] as? Bool) ?? false {
+                // Like a tap on the notification, with the button's data merged
+                // into the push data and its own deep link (Android parity).
+                var opened = payload
+                for (key, value) in (button["data"] as? [String: Any]) ?? [:] {
+                    opened[key] = PamNotificationTemplate.render("\(value)", variables)
+                }
+                let template = (button["deepLink"] as? String) ?? ""
+                let link = template.isEmpty ? deepLink : PamNotificationTemplate.render(template, variables)
+                let json = JSONSerialization.isValidJSONObject(opened)
+                    ? (try? JSONSerialization.data(withJSONObject: opened)).map { String(decoding: $0, as: UTF8.self) } ?? dataJson
+                    : dataJson
+                PushTokenRegistry.shared.report(
+                    event: 2, id: request.identifier, title: content.title, body: content.body,
+                    dataJson: json, deepLink: link, rendered: false
+                )
+                if (button["dismiss"] as? Bool) ?? true {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [request.identifier])
+                }
+                guard let endpoint = button["endpoint"] as? [String: Any] else {
+                    completion()
+                    return true
+                }
+                // Optional endpoint of the open button, sent natively like action().
+                variables["action_id"] = PamReplyFailure.createActionId()
+                variables["uuid"] = UUID().uuidString.lowercased()
+                send(endpoint, variables: variables) { status, _, missingCredential in
+                    PamNotificationActions.report(
+                        type: PamNotificationActionType.button, key: "", text: "", dataJson: dataJson,
+                        deepLink: link, status: missingCredential ? -1 : status, missingCredential: missingCredential, action: id
+                    )
+                    completion()
+                }
                 return true
             }
             variables["action_id"] = PamReplyFailure.createActionId()

@@ -382,3 +382,67 @@ Runtime::dispatchModuleResult($pendingActionCall['requestId'], ModuleResultStatu
 $last = $actions[count($actions) - 1];
 $assert($last->type === NotificationActionType::Button && $last->action === 'accept' && $last->delivered() && !$last->failureShown, 'Button taps must reach PHP with their id.');
 
+
+// Game invite on a conversation rule: background Recusar, Aceitar opening the app.
+PushRendering::forType('1')
+    ->where('message_type', 'game_invite')
+    ->conversation('{chat_id}', '{chat_name}')
+    ->message('{sender_name}')
+    ->deepLink('pushin://chat/{chat_id}')
+    ->action('decline', 'Recusar', ActionEndpoint::post('https://api.example.test/games/{invite_id}/decline'))
+    ->openAction('accept', 'Aceitar', 'pushin://game-challenge/{invite_id}?accept=1', ActionEndpoint::post('https://api.example.test/games/{invite_id}/accept'), data: ['game_invite_action' => '1'])
+    ->openAction('view', 'Ver')
+    ->register();
+$rule = json_decode((string) $lastCall()['values']['rule'], true);
+$assert(
+    array_column($rule['actions'], 'id') === ['decline', 'accept', 'view']
+        && $rule['actions'][1]['open'] === true && $rule['actions'][1]['data'] === ['game_invite_action' => '1']
+        && $rule['actions'][1]['deepLink'] === 'pushin://game-challenge/{invite_id}?accept=1' && $rule['actions'][1]['dismiss'] === true
+        && $rule['actions'][1]['endpoint']['url'] === 'https://api.example.test/games/{invite_id}/accept'
+        && !isset($rule['actions'][2]['endpoint']) && $rule['actions'][2]['deepLink'] === '' && $rule['actions'][2]['data'] === []
+        && $rule['alertOnce'] === null && $rule['key'] === '' && $rule['subText'] === '',
+    'Open buttons must carry their data and deep link templates next to background buttons.',
+);
+PushRendering::forType('7')
+    ->notification('{title}', '{body}')
+    ->key('{user_id}:{thread_id}')
+    ->subText('{notification_subtitle}')
+    ->alertOnce(false)
+    ->register();
+$rule = json_decode((string) $lastCall()['values']['rule'], true);
+$assert(
+    $rule['key'] === '{user_id}:{thread_id}' && $rule['subText'] === '{notification_subtitle}' && $rule['alertOnce'] === false,
+    'Notification rules must carry the replacement key, the sub text and alertOnce.',
+);
+$assert(
+    $rejects(static fn () => PushRendering::forType('7')->notification()->openAction('bad id', 'X'))
+        && $rejects(static fn () => PushRendering::forType('7')->notification()->openAction('a', 'X', data: ['bad field' => '1']))
+        && $rejects(static fn () => PushRendering::forType('7')->notification()->key(' '))
+        && $rejects(static fn () => PushRendering::forType('7')->notification()
+            ->action('a', 'A', ActionEndpoint::post('https://x.test'))->action('b', 'B', ActionEndpoint::post('https://x.test'))
+            ->openAction('c', 'C')->openAction('d', 'D')),
+    'Open buttons, keys and the 3-button limit must be validated.',
+);
+$assert(
+    (new \Pam\Native\Notifications\Contracts\ConversationNotification('chat-1'))->toArray()['alertOnce'] === true
+        && (new \Pam\Native\Notifications\Contracts\ConversationNotification('chat-1'))->alertOnce(false)->toArray()['alertOnce'] === false,
+    'Conversations alert once by default.',
+);
+PushNotifications::persistRenderedEvents();
+$assert(
+    $lastCall()['method'] === 'configurePushEvents' && $lastCall()['values']['persistRendered'] === true,
+    'persistRenderedEvents() must reach the native queue.',
+);
+$suppressed = PushRendering::forType('8')->notification()
+    ->suppressInForeground(blank: ['user_id', 'recipient_user_id'])
+    ->suppressInForeground(['system_event' => 'digest'])
+    ->suppressInForeground(blank: ['user_id', 'recipient_user_id'])
+    ->toArray();
+$assert(
+    $suppressed['suppress'] === [
+        ['foreground' => true, 'blank' => ['user_id', 'recipient_user_id']],
+        ['foreground' => true, 'where' => ['system_event' => 'digest']],
+    ] && PushRendering::forType('8')->notification()->suppressInForeground()->toArray()['suppress'] === [['foreground' => true]]
+        && $rejects(static fn () => PushRendering::forType('8')->notification()->suppressInForeground(blank: ['bad field'])),
+    'Foreground suppression must take field and blank-recipient conditions.',
+);

@@ -120,6 +120,60 @@ options only reach new installs (or a new channel id). The Android small icon
 is the host drawable `pam_notification_icon` when present, else the app's
 `android.icon.monochrome` layer cropped to its central 88 dp, else `pam_icon`.
 
+### One notification per subject, alerting once
+
+```php
+PushRendering::forType('4')
+    ->notification('{notification_title}', '{notification_body}')
+    ->key('{user_id}:{thread_id}')           // a new like on the post replaces the previous one
+    ->subText('{notification_subtitle}')     // "Curtida", "Novo seguidor"... next to the app name
+    ->register();
+```
+
+- `key()` (Android, `notification()` rules): pushes with the same rendered key
+  share one notification, which a new push replaces instead of piling up.
+- `alertOnce()` (Android): sound, vibration and heads-up only while the
+  notification is not already showing. Default on for `conversation()` rules
+  (a burst of messages alerts once) and keyed rules; `alertOnce(false)` alerts
+  on every push. `Notifications::conversation()->alertOnce(false)` likewise.
+- A conversation the user dismissed starts again with only the new message;
+  its older history is not brought back.
+
+### Buttons that open the app
+
+```php
+PushRendering::forType('1')
+    ->where('message_type', 'game_invite')
+    ->conversation('{chat_id}', '{chat_name}')
+    ->message('{sender_name}')
+    ->deepLink('pushin://chat/{chat_id}')                       // a plain tap opens the chat
+    ->action('decline', 'Recusar', ActionEndpoint::post('https://api.example.com/games/{invite_id}/decline'))
+    ->openAction('accept', 'Aceitar', 'pushin://game-challenge/{invite_id}?accept=1')
+    // optional: also send an endpoint natively, and merge extra data into the Opened push
+    // ->openAction('accept', 'Aceitar', 'pushin://game-challenge/{invite_id}', ActionEndpoint::post('...'), data: ['game_invite_action' => '1'])
+    ->register();
+```
+
+`action()` buttons send their endpoint in the background; `openAction()`
+buttons open the app at their deep link (an activity PendingIntent on Android,
+a `.foreground` action on iOS), optionally send their endpoint natively too
+(reported as a Button action), merge their `data` into the push data of the
+`Opened` PushMessage, and remove the notification once the app received the tap. Both work on `conversation()` and
+`notification()` rules (at most 3 buttons; on iOS through the rule's
+`category()`).
+
+### Avatars and event queue
+
+Downloaded avatars and pictures are written to the renderer's image cache
+(`pam-images-v1`, trimmed by the core) and decoded circles are kept in a small
+in-memory cache, so the large icon and the sender avatar of a conversation are
+fetched once (1.5 s connect / 2 s read bounds).
+
+Pushes a rule already rendered are queued for `listen()` in memory only: a
+push rendered with the app closed writes nothing to disk. Call
+`PushNotifications::persistRenderedEvents()` when the app needs those
+`Received` events after a process restart.
+
 <a id="platform-support"></a>
 ## <picture><img src=".github/assets/icons/grid.svg" width="22" height="22" alt=""></picture> Platform support
 

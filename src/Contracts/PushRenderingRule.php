@@ -63,8 +63,12 @@ final class PushRenderingRule
 
     private ?ReplyFailures $replyFailures = null;
 
-    /** @var list<array{id: string, label: string, endpoint: array<string, mixed>, dismiss: bool}> */
+    /** @var list<array<string, mixed>> background (endpoint) and open-app buttons */
     private array $actions = [];
+
+    private ?bool $alertOnce = null;
+    private string $key = '';
+    private string $subText = '';
 
     /** @var array{identifier: string, withoutReply: string}|null */
     private ?array $category = null;
@@ -239,6 +243,92 @@ final class PushRenderingRule
     }
 
     /**
+     * A button that opens the app (foreground action), like a tap on the
+     * notification but at `$deepLink` (a template such as
+     * 'pushin://game-challenge/{game_invitation_id}?accept=1'; empty = the
+     * rule's deep link). `$endpoint`, when given, is also sent natively, as
+     * for action() (reported as a Button action). `$data` (templates) is
+     * merged into the push data of the `Opened` PushMessage. With $dismiss the
+     * notification is removed once the app received the tap. Shares the
+     * 3-button limit with action(). Android: an activity PendingIntent (no
+     * trampoline); iOS: a `.foreground` action of the rule's category().
+     *
+     * @param array<string, string> $data
+     */
+    public function openAction(
+        string $id,
+        string $label,
+        string $deepLink = '',
+        ?ActionEndpoint $endpoint = null,
+        bool $dismiss = true,
+        array $data = [],
+    ): self {
+        if (preg_match('/^[A-Za-z0-9_.-]{1,64}$/D', $id) !== 1) {
+            throw new InvalidArgumentException('Notification button ids must match [A-Za-z0-9_.-]{1,64}.');
+        }
+        foreach ($data as $field => $value) {
+            if (!\is_string($field) || preg_match('/^[A-Za-z0-9_.-]{1,64}$/D', $field) !== 1 || strlen((string) $value) > 1_024) {
+                throw new InvalidArgumentException('Open button data needs simple keys and values up to 1024 bytes.');
+            }
+        }
+        $this->actions = array_values(array_filter($this->actions, static fn (array $action): bool => $action['id'] !== $id));
+        if (count($this->actions) >= 3) {
+            throw new InvalidArgumentException('Notifications support at most 3 buttons.');
+        }
+        $action = [
+            'id' => $id,
+            'label' => self::label($label),
+            'open' => true,
+            'deepLink' => self::template($deepLink),
+            'data' => (object) array_map(static fn (mixed $value): string => self::template((string) $value), $data),
+            'dismiss' => $dismiss,
+        ];
+        if ($endpoint !== null) {
+            $action['endpoint'] = $endpoint->toArray();
+        }
+        $this->actions[] = $action;
+
+        return $this;
+    }
+
+    /**
+     * Android: sound, vibration and heads-up only when the notification is not
+     * already showing (setOnlyAlertOnce). Default: on for conversation() rules
+     * (a burst of messages alerts once, like WhatsApp) and for keyed
+     * notification() rules (see key()); off otherwise.
+     */
+    public function alertOnce(bool $once = true): self
+    {
+        $this->alertOnce = $once;
+
+        return $this;
+    }
+
+    /**
+     * Android: a notification() rule posts one notification per key template
+     * (e.g. '{user_id}:{thread_id}'): a new push of the same subject replaces
+     * the previous one instead of piling up, alerting only once while it is
+     * shown (alertOnce(false) to alert on every push).
+     */
+    public function key(string $template): self
+    {
+        if (trim($template) === '' || strlen($template) > 1_024) {
+            throw new InvalidArgumentException('Notification keys must contain between 1 and 1024 bytes.');
+        }
+        $this->key = $template;
+
+        return $this;
+    }
+
+    /** Android sub text of a notification() rule (template, e.g. '{notification_subtitle}'), shown next to the app name. */
+    public function subText(string $template): self
+    {
+        $this->subText = self::template($template);
+
+        return $this;
+    }
+
+    /**
      * iOS: the APNs category the server sets on these pushes. The framework
      * registers it with this rule's reply / mark-as-read / buttons and
      * handles them natively. $withoutReply is the category the server uses
@@ -358,11 +448,35 @@ final class PushRenderingRule
      * Skip the notification whenever the app is in the foreground, e.g.
      * social activity the open app already shows. Rules without it still
      * notify in the foreground unless suppressWhenRoute() matches.
+     *
+     * Narrow it with `$where` (data field => value, all must match) and
+     * `$blank` (data fields that must all be missing or empty), e.g.
+     * suppressInForeground(blank: ['user_id', 'recipient_user_id']) skips
+     * foreground pushes addressed to nobody, as the RN app did. Each call adds
+     * one condition set; any matching set suppresses.
+     *
+     * @param array<string, string> $where
+     * @param list<string> $blank
      */
-    public function suppressInForeground(): self
+    public function suppressInForeground(array $where = [], array $blank = []): self
     {
-        if (!in_array(['foreground' => true], $this->suppress, true)) {
-            $this->suppress[] = ['foreground' => true];
+        foreach ([...array_keys($where), ...$blank] as $field) {
+            if (!\is_string($field) || preg_match('/^[A-Za-z0-9_.-]{1,64}$/D', $field) !== 1) {
+                throw new InvalidArgumentException('Foreground suppression conditions need simple data keys.');
+            }
+        }
+        if (count($where) > 8 || count($blank) > 8) {
+            throw new InvalidArgumentException('Foreground suppression supports at most 8 conditions of each kind.');
+        }
+        $entry = ['foreground' => true];
+        if ($where !== []) {
+            $entry['where'] = array_map('strval', $where);
+        }
+        if ($blank !== []) {
+            $entry['blank'] = array_values(array_unique($blank));
+        }
+        if (!in_array($entry, $this->suppress, true)) {
+            $this->suppress[] = $entry;
         }
 
         return $this;
@@ -426,6 +540,9 @@ final class PushRenderingRule
             'actions' => $this->actions,
             'category' => $this->category,
             'style' => (object) $this->style,
+            'alertOnce' => $this->alertOnce,
+            'key' => $this->key,
+            'subText' => $this->subText,
         ];
     }
 

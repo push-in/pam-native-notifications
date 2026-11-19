@@ -11,6 +11,21 @@ final class NativeCapabilitiesParityTests: XCTestCase {
         super.tearDown()
     }
 
+    func testAvatarMemoReturnsRecentBytesAndStaysBounded() {
+        let memo = PamAvatarMemo()
+        let small = Data(repeating: 1, count: 1_024)
+        memo.put("https://cdn.example/a.png", small)
+        XCTAssertEqual(memo.get("https://cdn.example/a.png"), small)
+        // Entries above a quarter of the budget are never kept.
+        memo.put("https://cdn.example/big.png", Data(repeating: 2, count: 1_024 * 1_024))
+        XCTAssertNil(memo.get("https://cdn.example/big.png"))
+        for index in 0..<8 {
+            memo.put("https://cdn.example/\(index).png", Data(repeating: 3, count: 400 * 1_024))
+        }
+        XCTAssertNil(memo.get("https://cdn.example/a.png"))
+        XCTAssertNotNil(memo.get("https://cdn.example/7.png"))
+    }
+
     func testMultipartBodyLengthMatchesWrittenBytes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("media"), withIntermediateDirectories: true)

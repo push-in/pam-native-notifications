@@ -21,6 +21,7 @@ class PluginHostProvider : ContentProvider() {
                     PamPushNotifications.clearLaunch()
                     return
                 }
+                PamNotificationButtons.handleOpen(context, intent)
                 PamPushNotifications.captureLaunch(
                     intent.getStringExtra("pam.notification.id").orEmpty(),
                     intent.getStringExtra("pam.notification.title").orEmpty(),
@@ -32,6 +33,7 @@ class PluginHostProvider : ContentProvider() {
             }
             override fun openedIntent(context: android.content.Context, intent: android.content.Intent?) {
                 if (intent?.getBooleanExtra("pam.notification.opened", false) != true) return
+                PamNotificationButtons.handleOpen(context, intent)
                 PamPushNotifications.reportOpened(
                     intent.getStringExtra("pam.notification.id").orEmpty(),
                     intent.getStringExtra("pam.notification.title").orEmpty(),

@@ -571,20 +571,27 @@ public enum PamConversationNotifications {
         return (try? content.updating(from: intent)) ?? content
     }
 
-    /// Avatar bytes from the image disk cache, the private sandbox or HTTPS.
+    /// Avatar bytes from memory (recent downloads), the image disk cache, the private sandbox or HTTPS.
     static func avatar(_ source: String) -> Data? {
         guard !source.isEmpty else { return nil }
         if source.hasPrefix("https://") || source.hasPrefix("http://") {
+            if let remembered = PamAvatarMemo.shared.get(source) { return remembered }
             let cached = PamBlockingResult<Data>()
             PamMediaDiskCache.shared.data(source: source, stableKey: nil, maxAgeMs: 0) { cached.resolve($0) }
-            if let data = cached.wait(timeout: 2), !data.isEmpty, data.count <= avatarBytes { return data }
+            if let data = cached.wait(timeout: 2), !data.isEmpty, data.count <= avatarBytes {
+                PamAvatarMemo.shared.put(source, data)
+                return data
+            }
             guard let url = URL(string: source) else { return nil }
             let downloaded = PamBlockingResult<Data>()
-            URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 4)) { data, response, _ in
+            // Short bounds like the Android renderer: a slow avatar must not hold the push.
+            URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 2)) { data, response, _ in
                 let ok = (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0)
                 downloaded.resolve(ok && (data?.count ?? 0) <= avatarBytes ? data : nil)
             }.resume()
-            return downloaded.wait(timeout: 5)
+            let data = downloaded.wait(timeout: 3)
+            if let data, !data.isEmpty { PamAvatarMemo.shared.put(source, data) }
+            return data
         }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pam-files")
@@ -812,7 +819,9 @@ public enum PamActiveRoute {
         }
     }
 
-    /// Suppression entries are `{route, params}`, `{path}` templates or `{foreground: true}`.
+    /// Suppression entries are `{route, params}`, `{path}` templates or
+    /// `{foreground: true}`, optionally narrowed by `where` (field = value) and
+    /// `blank` (every listed field missing or empty).
     static func matches(_ rules: [[String: Any]]?, _ variables: [String: String]) -> Bool {
         lock.lock()
         let foreground = foregroundOverride ?? active
@@ -822,7 +831,14 @@ public enum PamActiveRoute {
         lock.unlock()
         guard foreground, let rules else { return false }
         for rule in rules {
-            if (rule["foreground"] as? Bool) == true { return true }
+            if (rule["foreground"] as? Bool) == true {
+                let conditions = (rule["where"] as? [String: Any]) ?? [:]
+                let blank = (rule["blank"] as? [String]) ?? []
+                let whereMatched = conditions.allSatisfy { field, value in variables[field] == "\(value)" }
+                let blankMatched = blank.allSatisfy { (variables[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+                if whereMatched && blankMatched { return true }
+                continue
+            }
             if let routePath = rule["path"] as? String, !routePath.isEmpty {
                 guard PamNotificationTemplate.complete(routePath, variables) else { continue }
                 if !currentPath.isEmpty,
@@ -1053,5 +1069,39 @@ final class PamBackgroundTaskToken: @unchecked Sendable {
         identifier = .invalid
         lock.unlock()
         if id != .invalid { UIApplication.shared.endBackgroundTask(id) }
+    }
+}
+
+/// Recently loaded avatar bytes by URL, bounded by size: a conversation
+/// rebuild and the sender of every push reuse them instead of downloading again.
+final class PamAvatarMemo: @unchecked Sendable {
+    static let shared = PamAvatarMemo()
+    private let lock = NSLock()
+    private var entries: [String: Data] = [:]
+    private var order: [String] = []
+    private var bytes = 0
+    private let limit = 2 * 1_024 * 1_024
+
+    func get(_ source: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[source]
+    }
+
+    func put(_ source: String, _ data: Data) {
+        guard data.count <= limit / 4 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if let previous = entries[source] {
+            bytes -= previous.count
+            order.removeAll { $0 == source }
+        }
+        entries[source] = data
+        order.append(source)
+        bytes += data.count
+        while bytes > limit, !order.isEmpty {
+            let oldest = order.removeFirst()
+            bytes -= entries.removeValue(forKey: oldest)?.count ?? 0
+        }
     }
 }

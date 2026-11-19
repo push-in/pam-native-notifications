@@ -165,6 +165,7 @@ public object PamNotificationActions {
         tag: String,
         notificationId: Int,
         dismiss: Boolean,
+        conversation: String = "",
     ) {
         attach(context)
         val variables = NotificationTemplate.variables(dataJson) + mapOf(
@@ -176,7 +177,11 @@ public object PamNotificationActions {
         }
         val status = if (missingCredential) -1 else runCatching { NotificationEndpoint.send(context, endpoint, variables) }.getOrDefault(0)
         if (dismiss && status in 200..299) {
-            androidx.core.app.NotificationManagerCompat.from(context).cancel(tag.ifEmpty { null }, notificationId)
+            if (conversation.isNotEmpty()) {
+                PamConversationNotifications.cancel(context, conversation)
+            } else {
+                androidx.core.app.NotificationManagerCompat.from(context).cancel(tag.ifEmpty { null }, notificationId)
+            }
         }
         report(NotificationActionType.BUTTON, "", "", dataJson, deepLink, status, missingCredential, action = id)
     }

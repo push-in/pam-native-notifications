@@ -15,6 +15,8 @@ import org.json.JSONObject
 public object PamPushNotifications {
     private val lock = Any()
     private val events = ArrayDeque<ByteArray>()
+    /** Queued events kept in memory only (pushes a rule already rendered), by identity. */
+    private val memoryOnly = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<ByteArray, Boolean>())
     private var waiter: ModuleCompletion? = null
     private var preferences: SharedPreferences? = null
 
@@ -41,9 +43,22 @@ public object PamPushNotifications {
                 }.getOrNull() ?: continue
                 if (payload.isNotEmpty()) events.addLast(payload)
             }
-            while (events.size > MAX_QUEUED_EVENTS) events.removeFirst()
-            persistLocked()
+            if (events.size > MAX_QUEUED_EVENTS) {
+                while (events.size > MAX_QUEUED_EVENTS) events.removeFirst()
+                persistLocked()
+            }
         }
+    }
+
+    /**
+     * `PushNotifications::persistRenderedEvents()`: also keep pushes that a
+     * rule already rendered in the durable queue (default off: they stay in
+     * memory, so a push rendered with the app closed costs no disk write and
+     * a later process does not replay it).
+     */
+    internal fun persistRendered(context: Context, persist: Boolean) {
+        attach(context)
+        synchronized(lock) { preferences?.edit { putBoolean(PREFERENCES_PERSIST_RENDERED, persist) } }
     }
 
     @JvmStatic
@@ -138,7 +153,7 @@ public object PamPushNotifications {
                 null
             } else {
                 events.removeFirst().also {
-                    persistLocked()
+                    if (!memoryOnly.remove(it)) persistLocked()
                     launchDeliveredLocked(it)
                 }
             }
@@ -170,7 +185,8 @@ public object PamPushNotifications {
         deepLink: String,
         rendered: Boolean = false,
     ) {
-        deliver(encode(event, id, title, body, dataJson, deepLink, rendered, launch = ""))
+        val durable = !rendered || preferences?.getBoolean(PREFERENCES_PERSIST_RENDERED, false) == true
+        deliver(encode(event, id, title, body, dataJson, deepLink, rendered, launch = ""), durable)
     }
 
     private fun encode(
@@ -199,13 +215,15 @@ public object PamPushNotifications {
         return WireMap.encode(values)
     }
 
-    private fun deliver(payload: ByteArray) {
+    private fun deliver(payload: ByteArray, durable: Boolean = true) {
         val pending = synchronized(lock) {
             val value = waiter
             if (value == null) {
-                if (events.size >= MAX_QUEUED_EVENTS) events.removeFirst()
+                var evictedDurable = false
+                if (events.size >= MAX_QUEUED_EVENTS) evictedDurable = !memoryOnly.remove(events.removeFirst())
                 events.addLast(payload)
-                persistLocked()
+                if (!durable) memoryOnly.add(payload)
+                if (durable || evictedDurable) persistLocked()
             } else {
                 waiter = null
                 launchDeliveredLocked(payload)
@@ -240,7 +258,7 @@ public object PamPushNotifications {
         val storage = preferences ?: return
         val encoded = JSONArray()
         events.forEach { payload ->
-            encoded.put(Base64.encodeToString(payload, Base64.NO_WRAP))
+            if (payload !in memoryOnly) encoded.put(Base64.encodeToString(payload, Base64.NO_WRAP))
         }
         storage.edit { putString(PREFERENCES_EVENTS, encoded.toString()) }
     }
@@ -250,5 +268,6 @@ public object PamPushNotifications {
     private const val MAX_QUEUED_EVENTS = 64
     private const val MAX_DATA_BYTES = 256 * 1024
     private const val PREFERENCES_EVENTS = "events"
+    private const val PREFERENCES_PERSIST_RENDERED = "persistRendered"
     private const val PREFERENCES_NAME = "pam-native-push"
 }

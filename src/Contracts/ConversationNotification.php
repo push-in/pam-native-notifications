@@ -51,6 +51,7 @@ final class ConversationNotification
     private string $channelId = 'pam-messages';
     private string $channelName = 'Messages';
     private bool $silent = false;
+    private bool $alertOnce = true;
 
     public function __construct(private readonly string $key)
     {
@@ -158,6 +159,17 @@ final class ConversationNotification
     }
 
     /**
+     * Android: alert (sound, vibration, heads-up) only when the conversation
+     * is not already showing. On by default; false alerts on every update.
+     */
+    public function alertOnce(bool $once = true): self
+    {
+        $this->alertOnce = $once;
+
+        return $this;
+    }
+
+    /**
      * @param null|Closure(): void $callback
      * @param null|Closure(string): void $failure
      */
@@ -209,6 +221,7 @@ final class ConversationNotification
             'channelId' => $this->channelId,
             'channelName' => $this->channelName,
             'silent' => $this->silent,
+            'alertOnce' => $this->alertOnce,
         ];
     }
 

@@ -11,7 +11,6 @@ import dev.pam.nativeapp.modules.*
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import java.time.Instant
@@ -39,7 +38,11 @@ public object PamActiveRoute {
         this.foreground = foreground
     }
 
-    /** Suppression entries are `{route, params}`, `{path}` templates or `{foreground: true}`. */
+    /**
+     * Suppression entries are `{route, params}`, `{path}` templates or
+     * `{foreground: true}`, optionally narrowed by `where` (field = value) and
+     * `blank` (every listed field missing or empty, e.g. no recipient).
+     */
     internal fun matches(rules: JSONArray?, variables: Map<String, String>): Boolean {
         if (!foreground || rules == null) return false
         for (index in 0 until rules.length()) {
@@ -51,7 +54,14 @@ public object PamActiveRoute {
                 if (path.isNotEmpty() && normalize(path) == expected) return true
                 continue
             }
-            if (rule.optBoolean("foreground")) return true
+            if (rule.optBoolean("foreground")) {
+                val conditions = rule.optJSONObject("where") ?: JSONObject()
+                val blank = rule.optJSONArray("blank") ?: JSONArray()
+                val whereMatched = conditions.keys().asSequence().all { field -> variables[field] == conditions.optString(field) }
+                val blankMatched = (0 until blank.length()).all { variables[blank.optString(it)].isNullOrBlank() }
+                if (whereMatched && blankMatched) return true
+                continue
+            }
             if (rule.optString("route") != name || name.isEmpty()) continue
             val expectedParams = rule.optJSONObject("params") ?: JSONObject()
             val matched = expectedParams.keys().asSequence().all { key ->
@@ -185,6 +195,8 @@ public object PamPushRendering {
                         replyFailures = rule.optJSONObject("replyFailures"),
                         failure = null,
                         style = PamNotificationStyle.resolve(rule.optJSONObject("style"), ::text),
+                        buttons = PamNotificationButtons.resolve(rule.optJSONArray("actions"), ::text),
+                        alertOnce = if (rule.isNull("alertOnce")) true else rule.optBoolean("alertOnce", true),
                     ),
                 )
                 return true
@@ -196,11 +208,32 @@ public object PamPushRendering {
                 notify(
                     context, rule, variables["_id"].orEmpty(), title, text(rule.optString("body")), text(rule.optString("deepLink")), dataJson,
                     PamNotificationStyle.resolve(rule.optJSONObject("style"), ::text),
+                    Presentation(
+                        key = text(rule.optString("key")).take(256),
+                        subText = text(rule.optString("subText")).take(256),
+                        buttons = PamNotificationButtons.resolve(rule.optJSONArray("actions"), ::text),
+                    ),
                 )
                 return true
             }
         }
         return false
+    }
+
+    /**
+     * Push-time values of a notification() rule: the replacement key
+     * (PushRenderingRule::key(), e.g. '{user_id}:{thread_id}'), the subtitle
+     * and the buttons with their templates rendered.
+     */
+    internal data class Presentation(
+        val key: String = "",
+        val subText: String = "",
+        val buttons: JSONArray? = null,
+    ) {
+        /** Same key = same notification: a new push replaces the previous one of the subject. */
+        val tag: String get() = if (key.isEmpty()) TAG else "$TAG:$key"
+
+        fun notificationId(pushId: String): Int = if (key.isEmpty()) pushId.hashCode() else KEYED_ID
     }
 
     // canPostNotifications checks POST_NOTIFICATIONS (API 33+) and SecurityException is caught.
@@ -214,18 +247,19 @@ public object PamPushRendering {
         deepLink: String,
         dataJson: String,
         style: JSONObject?,
+        presentation: Presentation,
     ) {
-        val notification = buildNotification(context, rule, id, title, body, deepLink, dataJson, style)
+        val notification = buildNotification(context, rule, id, title, body, deepLink, dataJson, style, presentation)
         val compat = NotificationManagerCompat.from(context)
         if (!PamConversationNotifications.canPostNotifications(context, compat)) return
         try {
-            compat.notify(TAG, id.hashCode(), notification)
+            compat.notify(presentation.tag, presentation.notificationId(id), notification)
         } catch (_: SecurityException) {
             // Permission revoked between the check and the post.
         }
     }
 
-    /** Standard notification of a rule, with its background buttons (PushRenderingRule::action()). */
+    /** Standard notification of a rule, with its buttons (PushRenderingRule::action() / openAction()). */
     internal fun buildNotification(
         context: Context,
         rule: JSONObject,
@@ -235,6 +269,7 @@ public object PamPushRendering {
         deepLink: String,
         dataJson: String,
         style: JSONObject? = null,
+        presentation: Presentation = Presentation(buttons = rule.optJSONArray("actions")),
     ): android.app.Notification {
         val channelId = rule.optString("channelId").ifBlank { "pam-push" }
         PamNotificationStyle.ensureChannel(
@@ -244,6 +279,8 @@ public object PamPushRendering {
             if (rule.optInt("importance", 2) >= 3) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT,
             style,
         )
+        val tag = presentation.tag
+        val notificationId = presentation.notificationId(id)
         val picture = style?.optString("image")?.takeIf { it.isNotEmpty() }?.let { PamConversationNotifications.picture(context, it) }
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             putExtra("pam.notification.opened", true)
@@ -253,6 +290,9 @@ public object PamPushRendering {
             putExtra("pam.notification.data", dataJson)
             putExtra("pam.notification.deepLink", deepLink)
         }
+        // A keyed rule replaces the previous notification of the subject; it
+        // alerts again only once that one was dismissed (unless alertOnce(false)).
+        val alertOnce = if (rule.isNull("alertOnce")) presentation.key.isNotEmpty() else rule.optBoolean("alertOnce")
         val builder = NotificationCompat.Builder(context, channelId)
             .setPamSmallIcon(context)
             .setContentTitle(title)
@@ -265,15 +305,17 @@ public object PamPushRendering {
                 },
             )
             .setAutoCancel(true)
+            .setOnlyAlertOnce(alertOnce)
             // Android 7.x has no channels: priority and defaults carry the importance.
             .setPriority(if (rule.optInt("importance", 2) >= 3) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .apply {
+                if (presentation.subText.isNotEmpty()) setSubText(presentation.subText)
                 launch?.let {
                     setContentIntent(
                         PendingIntent.getActivity(
                             context,
-                            id.hashCode(),
+                            if (presentation.key.isEmpty()) id.hashCode() else tag.hashCode(),
                             it,
                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                         ),
@@ -281,32 +323,12 @@ public object PamPushRendering {
                 }
             }
         PamNotificationStyle.decorate(context, builder, style)
-        val buttons = rule.optJSONArray("actions") ?: JSONArray()
-        for (index in 0 until minOf(buttons.length(), 3)) {
-            val button = buttons.optJSONObject(index) ?: continue
-            val endpoint = button.optJSONObject("endpoint") ?: continue
-            val intent = Intent(context, PamNotificationActionReceiver::class.java)
-                .setAction(PamConversationNotifications.ACTION_BUTTON)
-                .setPackage(context.packageName)
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_ID, button.optString("id"))
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_ENDPOINT, endpoint.toString())
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_DATA, dataJson)
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_DEEP_LINK, deepLink)
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_TAG, TAG)
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_NOTIFICATION, id.hashCode())
-                .putExtra(PamConversationNotifications.EXTRA_BUTTON_DISMISS, button.optBoolean("dismiss", true))
-            val pending = PendingIntent.getBroadcast(
-                context,
-                (id.hashCode() * 31) + 16 + index,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-            builder.addAction(
-                NotificationCompat.Action.Builder(0, button.optString("label"), pending)
-                    .setShowsUserInterface(false)
-                    .build(),
-            )
-        }
+        PamNotificationButtons.add(
+            context,
+            builder,
+            presentation.buttons,
+            PamNotificationButtons.Target(id, title, body, dataJson, deepLink, tag, notificationId),
+        )
         return builder.build()
     }
 
@@ -346,6 +368,7 @@ public object PamPushRendering {
     }
 
     private const val TAG = "pam-push"
+    private const val KEYED_ID = 0x50414e
 
     private fun key(field: String, type: String, where: JSONObject?, requires: JSONArray?): String {
         val base = "$field\u0000$type"

@@ -105,6 +105,12 @@ internal data class ConversationSpec(
     val failure: JSONObject? = null,
     /** Resolved presentation extras: color, largeIcon, channel options (PamNotificationStyle). */
     val style: JSONObject? = null,
+    /** Rule buttons (background endpoints and open-app buttons), resolved by PamNotificationButtons. */
+    val buttons: JSONArray? = null,
+    /** Sound/vibration/heads-up only when the conversation is not already showing (PushRenderingRule::alertOnce). */
+    val alertOnce: Boolean = true,
+    /** When this conversation was last posted (keeps history across a burst, see [PamConversationNotifications.show]). */
+    val postedAt: Long = 0,
 ) {
     init {
         require(KEY.matches(key)) { "Conversation key must contain 1-128 safe characters" }
@@ -130,6 +136,9 @@ internal data class ConversationSpec(
         .put("replyFailures", replyFailures ?: JSONObject.NULL)
         .put("failure", failure ?: JSONObject.NULL)
         .put("style", style ?: JSONObject.NULL)
+        .put("buttons", buttons ?: JSONObject.NULL)
+        .put("alertOnce", alertOnce)
+        .put("postedAt", postedAt)
 
     companion object {
         const val DEFAULT_CHANNEL = "pam-messages"
@@ -159,6 +168,9 @@ internal data class ConversationSpec(
                 replyFailures = json.optJSONObject("replyFailures"),
                 failure = json.optJSONObject("failure"),
                 style = json.optJSONObject("style"),
+                buttons = json.optJSONArray("buttons"),
+                alertOnce = json.optBoolean("alertOnce", true),
+                postedAt = json.optLong("postedAt"),
             )
         }
 
@@ -183,20 +195,26 @@ public object PamConversationNotifications {
     internal const val EXTRA_BUTTON_TAG = "dev.pam.nativeapp.button.TAG"
     internal const val EXTRA_BUTTON_NOTIFICATION = "dev.pam.nativeapp.button.NOTIFICATION"
     internal const val EXTRA_BUTTON_DISMISS = "dev.pam.nativeapp.button.DISMISS"
+    internal const val EXTRA_BUTTON_CONVERSATION = "dev.pam.nativeapp.button.CONVERSATION"
     private const val PREFERENCES = "pam-native-conversations"
     private const val AVATAR_BYTES = 2 * 1024 * 1024
     private val lock = Any()
 
-    /** Merges messages into the stored history and posts the notification. */
+    /**
+     * Merges messages into the stored history and posts the notification.
+     * History only continues a conversation that is still showing: once the
+     * user dismissed it (or it was removed any other way) the next message
+     * starts a fresh notification, like the system Messages apps.
+     */
     internal fun show(context: Context, incoming: ConversationSpec): ConversationSpec {
         val merged = synchronized(lock) {
-            val previous = load(context, incoming.key)
+            val previous = load(context, incoming.key)?.takeIf { showing(context, it) }
             val history = LinkedHashMap<String, ConversationMessage>()
             (previous?.messages.orEmpty() + incoming.messages).forEachIndexed { index, message ->
                 history[message.id.ifEmpty { "auto-${message.timestamp}-$index-${message.text.hashCode()}" }] = message
             }
             val messages = history.values.sortedBy { it.timestamp }.takeLast(ConversationSpec.MAX_HISTORY)
-            incoming.copy(messages = messages).also { store(context, it) }
+            incoming.copy(messages = messages, postedAt = System.currentTimeMillis()).also { store(context, it) }
         }
         post(context, merged)
         return merged
@@ -243,6 +261,20 @@ public object PamConversationNotifications {
             putExtra("pam.notification.deepLink", spec.deepLink)
         }
     }
+
+    /**
+     * The stored conversation is still in the shade. A post made moments ago
+     * may not be listed yet (NotificationManager enqueues asynchronously), so a
+     * burst of messages keeps its history either way.
+     */
+    private fun showing(context: Context, stored: ConversationSpec): Boolean {
+        if (System.currentTimeMillis() - stored.postedAt in 0 until postSettleMillis) return true
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return true
+        return runCatching { manager.activeNotifications.any { it.id == NOTIFICATION_ID && it.tag == stored.key } }.getOrDefault(true)
+    }
+
+    /** How long a fresh post counts as showing before the shade lists it (tests shorten it). */
+    @Volatile internal var postSettleMillis = 10_000L
 
     internal fun cancel(context: Context, key: String) {
         synchronized(lock) {
@@ -295,7 +327,7 @@ public object PamConversationNotifications {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setShortcutId(spec.key)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(spec.silent)
+            .setOnlyAlertOnce(spec.silent || spec.alertOnce)
             .setPriority(priority(spec.importance))
             // Android 7.x has no channels: sound and vibration come from the defaults
             // (ignored on 8.0+, where the channel decides).
@@ -368,6 +400,22 @@ public object PamConversationNotifications {
                     .build(),
             )
         }
+        val last = spec.messages.lastOrNull()
+        PamNotificationButtons.add(
+            context,
+            builder,
+            spec.buttons,
+            PamNotificationButtons.Target(
+                eventId = spec.key,
+                title = spec.title.ifBlank { last?.sender?.name.orEmpty() },
+                body = last?.text.orEmpty(),
+                dataJson = spec.dataJson,
+                deepLink = spec.deepLink,
+                tag = spec.key,
+                notificationId = NOTIFICATION_ID,
+                conversation = spec.key,
+            ),
+        )
         return builder
     }
 
@@ -427,9 +475,20 @@ public object PamConversationNotifications {
             .apply { avatar(context, value.avatar)?.let { setIcon(IconCompat.createWithBitmap(it)) } }
             .build()
 
-    /** Loads an avatar from the image disk cache, the private sandbox or HTTPS. */
-    internal fun avatar(context: Context, source: String): Bitmap? =
-        image(context, source, AVATAR_EDGE)?.let(::circle)
+    /**
+     * Loads an avatar from the image disk cache, the private sandbox or HTTPS.
+     * Circles are memoized per source: a conversation rebuild (every push,
+     * reply, failure) and the large icon reuse them instead of downloading again.
+     */
+    internal fun avatar(context: Context, source: String): Bitmap? {
+        if (source.isBlank()) return null
+        // Remote images only: a private file may be rewritten in place.
+        val remote = source.startsWith("https://") || source.startsWith("http://")
+        if (remote) avatars.get(source)?.let { return it }
+        val circle = image(context, source, AVATAR_EDGE)?.let(::circle) ?: return null
+        if (remote) avatars.put(source, circle)
+        return circle
+    }
 
     /** Loads a big picture (no crop), downsampled to about [PICTURE_EDGE] pixels. */
     internal fun picture(context: Context, source: String): Bitmap? = image(context, source, PICTURE_EDGE)
@@ -457,14 +516,18 @@ public object PamConversationNotifications {
     private fun cachedOrDownload(context: Context, source: String): ByteArray? {
         val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        val cached = File(File(context.cacheDir, "pam-images-v1"), "$digest.image")
-        if (cached.isFile && cached.length() in 1..AVATAR_BYTES.toLong()) return cached.readBytes()
+        val directory = File(context.cacheDir, "pam-images-v1")
+        val cached = File(directory, "$digest.image")
+        if (cached.isFile && cached.length() in 1..AVATAR_BYTES.toLong()) {
+            cached.setLastModified(System.currentTimeMillis())
+            return cached.readBytes()
+        }
         val uri = URI(source)
         require(uri.scheme == "https" || ((context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)) { "Avatars require HTTPS" }
         val connection = URL(source).openConnection() as HttpURLConnection
         return try {
-            connection.connectTimeout = 4_000
-            connection.readTimeout = 4_000
+            connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
+            connection.readTimeout = READ_TIMEOUT_MILLIS
             connection.instanceFollowRedirects = true
             if (connection.responseCode !in 200..299) return null
             connection.inputStream.use { input ->
@@ -477,10 +540,25 @@ public object PamConversationNotifications {
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
-            }
+            }.also { bytes -> remember(directory, cached, bytes) }
         } finally {
             connection.disconnect()
         }
+    }
+
+    /**
+     * Writes a downloaded image into the renderer's disk cache (same folder and
+     * `sha256(url).image` name the read above uses; the core's cache trimming
+     * bounds the folder). Temporary file + rename: readers never see a partial file.
+     */
+    private fun remember(directory: File, target: File, bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        val temporary = File(directory, "${target.name}.${android.os.Process.myTid()}.tmp")
+        runCatching {
+            directory.mkdirs()
+            temporary.outputStream().use { it.write(bytes) }
+            if (!temporary.renameTo(target)) temporary.delete()
+        }.onFailure { temporary.delete() }
     }
 
     private fun circle(source: Bitmap): Bitmap {
@@ -498,6 +576,12 @@ public object PamConversationNotifications {
     }
 
     private const val AVATAR_EDGE = 128
+    private const val CONNECT_TIMEOUT_MILLIS = 1_500
+    private const val READ_TIMEOUT_MILLIS = 2_000
+    /** Decoded avatar circles by URL, bounded by bytes (a few dozen small circles). */
+    private val avatars = object : android.util.LruCache<String, Bitmap>(3 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
     private const val PICTURE_EDGE = 720
     private const val MAX_CONVERSATIONS = 64
 }
@@ -521,6 +605,7 @@ public class PamNotificationActionReceiver : BroadcastReceiver() {
                         intent.getStringExtra(PamConversationNotifications.EXTRA_BUTTON_TAG).orEmpty(),
                         intent.getIntExtra(PamConversationNotifications.EXTRA_BUTTON_NOTIFICATION, 0),
                         intent.getBooleanExtra(PamConversationNotifications.EXTRA_BUTTON_DISMISS, true),
+                        intent.getStringExtra(PamConversationNotifications.EXTRA_BUTTON_CONVERSATION).orEmpty(),
                     )
                 } finally {
                     pending.finish()
