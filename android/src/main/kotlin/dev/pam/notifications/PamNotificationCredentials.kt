@@ -41,12 +41,14 @@ public object PamNotificationCredentials {
         synchronized(lock) {
             preferences(context).edit(commit = true) { putString(key, value) }
         }
+        PamPushTokenRegistration.credentialsChanged(context)
     }
 
     internal fun remove(context: Context, account: String) {
         val id = normalize(account)
         if (id.isEmpty()) return
         synchronized(lock) { preferences(context).edit(commit = true) { remove(slot(id)) } }
+        PamPushTokenRegistration.credentialsChanged(context)
     }
 
     /** Replaces every stored credential with [tokens] (account id to token). */
@@ -54,6 +56,7 @@ public object PamNotificationCredentials {
         // Every token is validated and sealed before the store is touched,
         // and the clear and the writes land in one commit: an invalid entry
         // leaves the previous credentials intact instead of a half-written set.
+        require(tokens.size <= 64) { "Too many notification credentials" }
         val entries = tokens.map { (account, token) -> sealedEntry(account, token) }
         synchronized(lock) {
             preferences(context).edit(commit = true) {
@@ -61,6 +64,7 @@ public object PamNotificationCredentials {
                 entries.forEach { (key, value) -> putString(key, value) }
             }
         }
+        PamPushTokenRegistration.credentialsChanged(context)
     }
 
     private fun sealedEntry(account: String, token: String): Pair<String, String> {
@@ -75,6 +79,7 @@ public object PamNotificationCredentials {
 
     internal fun clear(context: Context) {
         synchronized(lock) { preferences(context).edit(commit = true) { clear() } }
+        PamPushTokenRegistration.credentialsChanged(context)
     }
 
     /** The token of [account], or null when that account has none on this device. */

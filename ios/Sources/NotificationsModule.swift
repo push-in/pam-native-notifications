@@ -354,6 +354,10 @@ public final class NotificationsModule: NativeModule, ClosableNativeModule {
                     PamPushRendering.forget(field: field, type: type)
                 }
                 completion(.success, Data())
+            case "configureTokenRegistration":
+                // Android's headless FCM queue is additive. iOS keeps its
+                // existing foreground/APNs registration path unchanged.
+                completion(.success, Data())
             case "setCredential":
                 let values = try WireMap.decode(payload)
                 guard case let .text(account)? = values["account"], case let .text(token)? = values["token"] else {
