@@ -11,6 +11,8 @@
   native dependency.
 - Keep registration and receiver persistence off the main thread. Reject stale
   Firebase callbacks before they can replace a fresh queued token after logout.
+- Reconcile completed jobs on the worker and keep JobService lifecycle callbacks
+  independent of persistence locks; stale completions retain newer job ownership.
 - Bound notification endpoint error-response reads to 16 KiB.
 - Add PHP, state-machine and Android integration regression coverage.
 

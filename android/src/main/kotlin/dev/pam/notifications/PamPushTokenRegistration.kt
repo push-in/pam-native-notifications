@@ -38,7 +38,7 @@ internal object PamPushTokenRegistration {
     internal val worker = ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(1),
         { runnable -> Thread(runnable, "pam-push-token").apply { isDaemon = true } })
 
-    private var active: Cancellation? = null
+    private val active = AtomicReference<Cancellation?>()
     private val intakeLock = Any()
     private data class Incoming(val context: Application, val token: String, val expectedEpoch: Long?,
         val receiptGeneration: Long, val finished: () -> Unit)
@@ -100,8 +100,8 @@ internal object PamPushTokenRegistration {
         }
     }
 
-    fun started(cancel: Cancellation) = synchronized(lock) { active = cancel }
-    fun stopped(cancel: Cancellation) = synchronized(lock) { if (active === cancel) active = null }
+    fun started(cancel: Cancellation) { active.set(cancel) }
+    fun stopped(cancel: Cancellation) { active.compareAndSet(cancel, null) }
 
     private fun credentials(context: Context): (String) -> String? = { PamNotificationCredentials.token(context, it) }
     private fun allowed(context: Context) = NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -167,7 +167,7 @@ internal object PamPushTokenRegistration {
         // Let the current serialized HTTP request finish before sending a new
         // generation, even if its last permitted attempt is already reserved.
         // Consent revocation still cancels immediately; unregister cancels too.
-        if (active != null && allowed(context)) return@synchronized TokenScheduleResult.UNCHANGED
+        if (active.get() != null && allowed(context)) return@synchronized TokenScheduleResult.UNCHANGED
         if (pending == null) {
             scheduler.cancel(JOB_ID)
             return@synchronized TokenScheduleResult.EMPTY
@@ -293,22 +293,23 @@ class PushTokenRegistrationJob : JobService() {
         val task = FutureTask<Unit> {
             try { PamPushTokenRegistration.drain(applicationContext, cancel) }
             finally {
+                PamPushTokenRegistration.stopped(cancel)
+                // Reconcile and persist on the existing worker. Main-thread
+                // lifecycle callbacks must never wait for the state lock/disk.
+                val result = if (!cancel.stopped.get()) runCatching {
+                    PamPushTokenRegistration.schedule(applicationContext, force = true)
+                } else null
                 main.post {
                     if (cancellation === cancel && !cancel.stopped.get()) {
                         cancellation = null
                         future = null
-                        PamPushTokenRegistration.stopped(cancel)
                         // Establish the next wake-up before releasing this one.
                         // If scheduling fails, Android retains/retries this job.
                         invocation = null
-                        val result = runCatching { PamPushTokenRegistration.schedule(applicationContext, force = true) }
-                        if (result.getOrNull() != TokenScheduleResult.SCHEDULED) {
+                        if (result?.getOrNull() != TokenScheduleResult.SCHEDULED) {
                             // Scheduling the same ID replaces this execution:
                             // Android says not to finish the replaced job again.
-                            val retry = result.isFailure && runCatching {
-                                PamPushTokenRegistration.pending(applicationContext)
-                            }.getOrDefault(true)
-                            jobFinished(params, retry)
+                            jobFinished(params, result?.isFailure != false)
                         }
                     }
                 }
@@ -325,7 +326,7 @@ class PushTokenRegistrationJob : JobService() {
                 if (cancellation === cancel && !cancel.stopped.get()) {
                     cancellation = null
                     invocation = null
-                    jobFinished(params, runCatching { PamPushTokenRegistration.pending(applicationContext) }.getOrDefault(true))
+                    jobFinished(params, true)
                 }
             }
             true
@@ -349,6 +350,8 @@ class PushTokenRegistrationJob : JobService() {
         PamPushTokenRegistration.cancelWorker(future)
         cancellation = null
         future = null
-        return runCatching { PamPushTokenRegistration.pending(applicationContext) }.getOrDefault(true)
+        // Conservatively retain Android's wake-up. The worker reconciles durable
+        // state on restart; an empty/terminal queue finishes without HTTP/retry.
+        return true
     }
 }
