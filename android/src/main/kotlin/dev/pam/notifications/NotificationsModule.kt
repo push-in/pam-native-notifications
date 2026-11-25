@@ -89,6 +89,11 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
                     }
                     completion.complete(ModuleResultStatus.SUCCESS, ByteArray(0))
                 }
+                "configureTokenRegistration" -> background(completion) {
+                    val values = WireMap.decode(payload)
+                    PamPushTokenRegistration.configure(activity.applicationContext, values.text("endpoint"), values.text("accounts"))
+                    ByteArray(0)
+                }
                 "setCredential" -> background(completion) {
                     val values = WireMap.decode(payload)
                     PamNotificationCredentials.set(activity.applicationContext, values.text("account"), values.text("token"))
@@ -134,9 +139,11 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
     }
 
     private fun registerPush(completion: ModuleCompletion) {
+        val epoch = PamPushTokenRegistration.registrationEpoch(activity.applicationContext)
         FirebaseTokens.await(main, "getToken", "Push token registration", completion) { task ->
             val token = task.result as? String
             require(!token.isNullOrBlank()) { "Firebase returned an empty push token" }
+            PamPushTokenRegistration.receive(activity.applicationContext, token, expectedEpoch = epoch) {}
             WireMap.encode(
                 mapOf(
                     "token" to WireValue.Text(token),
@@ -147,7 +154,16 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
     }
 
     private fun unregisterPush(completion: ModuleCompletion) {
-        FirebaseTokens.await(main, "deleteToken", "Push token unregistration", completion) { ByteArray(0) }
+        try {
+            worker.execute {
+                runCatching { PamPushTokenRegistration.unregister(activity.applicationContext) }.fold(
+                    onSuccess = { main.post { FirebaseTokens.await(main, "deleteToken", "Push token unregistration", completion) { ByteArray(0) } } },
+                    onFailure = { completion.complete(ModuleResultStatus.FAILURE, "Push token unregistration persistence failed".toByteArray()) },
+                )
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            completion.complete(ModuleResultStatus.FAILURE, "Notifications module is closed".toByteArray())
+        }
     }
 
     private fun requestPermission(completion: ModuleCompletion) {

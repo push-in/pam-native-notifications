@@ -80,4 +80,12 @@ class NativeCapabilitiesTest {
         assertEquals(null, PamPushRendering.parseIsoInstant("yesterday"))
     }
 
+    @Test fun errorResponseReaderDoesNotConsumeAnUnboundedStream() {
+        var count = 0
+        val infinite = object : java.io.InputStream() {
+            override fun read(): Int { count++; return 65 }
+        }
+        assertEquals(16_384, NotificationEndpoint.readLimited(infinite, 16_384).size)
+        assertEquals(16_384, count)
+    }
 }

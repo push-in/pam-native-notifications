@@ -392,7 +392,14 @@ internal object NotificationEndpoint {
     fun send(context: Context, endpoint: JSONObject, variables: Map<String, String>): Int =
         sendForResult(context, endpoint, variables).status
 
-    fun sendForResult(context: Context, endpoint: JSONObject, variables: Map<String, String>): Result {
+    fun sendForResult(
+        context: Context,
+        endpoint: JSONObject,
+        variables: Map<String, String>,
+        credentials: ((String) -> String?)? = null,
+        beforeSend: (() -> Boolean)? = null,
+        connectionObserver: ((HttpURLConnection?) -> Unit)? = null,
+    ): Result {
         val method = endpoint.optString("method", "POST").uppercase()
         require(method in setOf("POST", "PUT", "PATCH", "DELETE")) { "Unsupported endpoint method" }
         val url = NotificationTemplate.render(endpoint.getString("url"), variables, context, NO_CREDENTIALS) {
@@ -405,6 +412,7 @@ internal object NotificationEndpoint {
         require(uri.host != null && uri.userInfo == null) { "Invalid notification endpoint" }
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
+            connectionObserver?.invoke(connection)
             connection.requestMethod = method
             connection.connectTimeout = 8_000
             connection.readTimeout = 8_000
@@ -413,7 +421,8 @@ internal object NotificationEndpoint {
             val headers = endpoint.optJSONObject("headers") ?: JSONObject()
             headers.keys().forEach { name ->
                 require(HEADER.matches(name)) { "Invalid endpoint header" }
-                val value = NotificationTemplate.render(headers.getString(name), variables, context)
+                val value = NotificationTemplate.render(headers.getString(name), variables, context,
+                    credentials ?: { account -> PamNotificationCredentials.token(context, account) })
                 require('\r' !in value && '\n' !in value && value.length <= 8_192) { "Invalid endpoint header value" }
                 connection.setRequestProperty(name, value)
             }
@@ -423,14 +432,16 @@ internal object NotificationEndpoint {
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.doOutput = true
                 connection.setFixedLengthStreamingMode(rendered.size)
+                check(beforeSend?.invoke() != false) { "Notification delivery was cancelled" }
                 connection.outputStream.use { it.write(rendered) }
             }
+            check(beforeSend?.invoke() != false) { "Notification delivery was cancelled" }
             val status = connection.responseCode
             var message: String? = null
             runCatching {
                 if (status >= 400) {
                     connection.errorStream?.use { stream ->
-                        val raw = stream.readBytes().take(16_384).toByteArray().toString(Charsets.UTF_8)
+                        val raw = readLimited(stream, 16_384).toString(Charsets.UTF_8)
                         message = runCatching { JSONObject(raw).optString("message").trim() }.getOrNull()?.takeIf(String::isNotEmpty)
                     }
                 } else {
@@ -440,7 +451,20 @@ internal object NotificationEndpoint {
             return Result(status, message)
         } finally {
             connection.disconnect()
+            connectionObserver?.invoke(null)
         }
+    }
+
+    internal fun readLimited(stream: java.io.InputStream, limit: Int): ByteArray {
+        val bytes = ByteArray(limit)
+        var size = 0
+        while (size < limit) {
+            val read = stream.read(bytes, size, limit - size)
+            if (read < 0) break
+            if (read == 0) break
+            size += read
+        }
+        return bytes.copyOf(size)
     }
 
     private fun renderJson(value: Any?, variables: Map<String, String>, context: Context): Any? = when (value) {

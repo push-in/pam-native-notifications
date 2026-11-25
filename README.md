@@ -194,6 +194,54 @@ push rendered with the app closed writes nothing to disk. Call
 Ask at runtime with `Notifications::requestPermission()` before scheduling or showing notifications.
 Below Android 13 there is no prompt: the callback reports whether the app's notifications are switched on (`false` when the user turned them off; only the system Settings can turn them back on).
 
+### Register refreshed FCM tokens while PHP is stopped
+
+Configure the native token endpoint after the account credential store has been
+synchronized. The Android Firebase service can then deliver a refreshed token
+without an Activity or a running PHP runtime. Android force-stop restrictions still
+apply; this does not bypass them. Keep the existing foreground
+registration as a compatibility fallback; the server endpoint should be idempotent.
+
+```php
+use Pam\Native\Notifications\Contracts\ActionEndpoint;
+use Pam\Native\Notifications\Contracts\NotificationCredentials;
+use Pam\Native\Notifications\Contracts\PushTokenRegistration;
+
+NotificationCredentials::sync($accountTokens, callback: static function () use ($accountTokens, $registrationUrl, $providerType) {
+    PushTokenRegistration::configure(
+        ActionEndpoint::post($registrationUrl)
+            ->bearerFromCredential('account')
+            ->json(['token' => '{token}', 'provider_type' => $providerType->value]),
+        array_map('strval', array_keys($accountTokens)),
+    );
+});
+```
+
+`$providerType` is the application's integer-backed enum; the plugin does not
+translate or invent the backend's provider values. `{account}` is also available
+in the endpoint. Configuration accepts at most 64 account IDs and a 64 KiB
+endpoint. Bearers remain in the existing Keystore credential store, not in the
+endpoint or job extras. On iOS, `configure()` explicitly succeeds without changing
+the existing foreground/APNs registration flow.
+
+Android persists only the latest token and schedules one network-constrained,
+one-shot JobScheduler job. Successful deliveries are deduplicated by token,
+account, credential and endpoint. Duplicate configuration does not reset retry
+budgets. Offline waiting survives process death; network errors, HTTP 408/429 and
+5xx retry with exponential delay, at most eight attempts per delivery. Other HTTP
+failures stop that delivery until its identity changes. Process boot and foreground
+reconcile pending work once, with no polling or periodic jobs. No request is sent
+while notification consent is disabled; configuration, a token event, foreground
+or `registerPush()` rechecks it.
+
+Credential replacement/removal is checked immediately before each send and before
+acknowledging its response. Requests are serialized; a new token or credential is
+sent after an older in-flight response instead of being overwritten by it. An
+already transmitted HTTP request cannot be recalled. Native unregister invalidates
+pending token work before asking Firebase to delete its token. Empty accounts or
+missing credentials create no eligible work. A stopped job disconnects its request
+and leaves durable retry state; worker threads expire when idle.
+
 <a id="capabilities"></a>
 ## <picture><img src=".github/assets/icons/bell.svg" width="22" height="22" alt=""></picture> Capabilities
 

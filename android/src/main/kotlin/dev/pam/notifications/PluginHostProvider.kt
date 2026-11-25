@@ -12,6 +12,7 @@ class PluginHostProvider : ContentProvider() {
         val app = requireNotNull(context).applicationContext
         PamPushNotifications.attach(app)
         PamNotificationActions.attach(app)
+        PamPushTokenRegistration.resume(app)
         HostEvents.register(object : HostEventListener {
             // Runs on the main thread right before PHP boots (PamActivity):
             // a tap that cold-starts the runtime is exported for
@@ -43,7 +44,10 @@ class PluginHostProvider : ContentProvider() {
                 )
                 intent.removeExtra("pam.notification.opened")
             }
-            override fun foreground(active: Boolean) = PamActiveRoute.setForeground(active)
+            override fun foreground(active: Boolean) {
+                PamActiveRoute.setForeground(active)
+                if (active) PamPushTokenRegistration.resume(app)
+            }
             override fun prepareReload() {
                 PamPushNotifications.prepareReload()
                 PamNotificationActions.prepareReload()

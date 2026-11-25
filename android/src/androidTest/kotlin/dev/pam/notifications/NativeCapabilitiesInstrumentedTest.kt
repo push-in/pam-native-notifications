@@ -595,7 +595,15 @@ class NativeCapabilitiesInstrumentedTest {
             val data = JSONObject().put("type", "1").put("message_type", "game_invite").put("chat_id", chat).put("chat_name", "Ana")
                 .put("sender_name", "Ana").put("body", "Desafio").put("invite_id", "77")
             assertTrue(PamPushRendering.render(context, "p1", "", "", data.toString()))
-            val posted = active(chat).single().notification
+            // NotificationManager publishes asynchronously, even after notify returns.
+            val deadline = android.os.SystemClock.elapsedRealtime() + 2_000
+            var notifications = active(chat)
+            while (notifications.isEmpty() && android.os.SystemClock.elapsedRealtime() < deadline) {
+                Thread.sleep(20)
+                notifications = active(chat)
+            }
+            assertEquals("Conversation notification was not published", 1, notifications.size)
+            val posted = notifications.single().notification
             assertEquals(listOf("Recusar", "Aceitar"), posted.actions.map { it.title.toString() })
             assertTrue("conversations alert once", posted.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
             if (Build.VERSION.SDK_INT >= 31) {

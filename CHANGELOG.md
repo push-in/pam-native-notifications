@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.14 - 2026-11-25
+
+- Android: opt-in native FCM token registration through an application-defined
+  endpoint, without an Activity or PHP runtime. Account credentials remain in
+  the existing encrypted store.
+- Persist the latest token, deduplicate per account and credential, and use a
+  one-shot network-constrained job with eight bounded attempts. Logout, token
+  rotation and credential changes invalidate stale work. No polling or added
+  native dependency.
+- Bound notification endpoint error-response reads to 16 KiB.
+- Add PHP, state-machine and Android integration regression coverage.
+
+Requires PAM Native 1.54.16 for the new native token event. Existing notification
+APIs remain compatible; iOS accepts the configuration as a no-op.
+
 ## 0.1.13 - 2026-11-19
 
 - Fixed: Android below 13: Notifications::requestPermission() reports areNotificationsEnabled() instead of always true (false when the user switched notifications off).
