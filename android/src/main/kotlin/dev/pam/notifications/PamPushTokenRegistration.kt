@@ -40,7 +40,9 @@ internal object PamPushTokenRegistration {
 
     private var active: Cancellation? = null
     private val intakeLock = Any()
-    private data class Incoming(val context: Application, val token: String, val epoch: Long, val finished: () -> Unit)
+    private data class Incoming(val context: Application, val token: String, val expectedEpoch: Long?,
+        val receiptGeneration: Long, val finished: () -> Unit)
+    private var receiptGeneration = 0L
     private var incoming: Incoming? = null
     private var receiving = false
     private val intake = ThreadPoolExecutor(0, 1, 30, TimeUnit.SECONDS, ArrayBlockingQueue<Runnable>(1),
@@ -57,14 +59,23 @@ internal object PamPushTokenRegistration {
         if (task != null) worker.remove(task)
     }
 
-    fun registrationEpoch(context: Context): Long = transaction(context) { it.registrationEpoch }
+    data class RegistrationTicket(val epoch: Long, val receiptGeneration: Long)
+
+    fun registrationTicket(context: Context): RegistrationTicket = transaction(context) { state ->
+        synchronized(intakeLock) { RegistrationTicket(state.registrationEpoch, receiptGeneration) }
+    }
 
     /** Coalesce bursts while a goAsync lease still protects the latest write. */
-    fun receive(context: Context, token: String, expectedEpoch: Long? = null, finished: () -> Unit) {
-        val entry = Incoming(context.applicationContext as Application, token, expectedEpoch ?: registrationEpoch(context), finished)
+    fun receive(context: Context, token: String, ticket: RegistrationTicket? = null, finished: () -> Unit) {
         synchronized(intakeLock) {
+            // A stale Firebase callback must not evict a fresh broadcast already
+            // waiting in the coalesced slot. This check performs no disk access.
+            if (ticket != null && ticket.receiptGeneration != receiptGeneration) {
+                finished()
+                return
+            }
             incoming?.finished?.invoke()
-            incoming = entry
+            incoming = Incoming(context.applicationContext as Application, token, ticket?.epoch, receiptGeneration, finished)
             if (receiving) return
             receiving = true
             intake.execute {
@@ -74,7 +85,8 @@ internal object PamPushTokenRegistration {
                     } ?: break
                     try {
                         transaction(next.context) {
-                            if (it.registrationEpoch == next.epoch) {
+                            val currentReceipt = synchronized(intakeLock) { receiptGeneration == next.receiptGeneration }
+                            if (currentReceipt && (next.expectedEpoch == null || it.registrationEpoch == next.expectedEpoch)) {
                                 it.token(next.token)
                                 it.reconcile(credentials(next.context))
                             }
@@ -136,7 +148,12 @@ internal object PamPushTokenRegistration {
     }
 
     fun unregister(context: Context) {
-        transaction(context) { it.unregister() }
+        transaction(context) {
+            // Linearize the epoch and receipt generation with ticket capture.
+            // Always state lock -> intakeLock; never hold intakeLock during I/O.
+            synchronized(intakeLock) { receiptGeneration++ }
+            it.unregister()
+        }
         context.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID)
     }
 

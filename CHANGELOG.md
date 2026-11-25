@@ -9,6 +9,8 @@
   one-shot network-constrained job with eight bounded attempts. Logout, token
   rotation and credential changes invalidate stale work. No polling or added
   native dependency.
+- Keep registration and receiver persistence off the main thread. Reject stale
+  Firebase callbacks before they can replace a fresh queued token after logout.
 - Bound notification endpoint error-response reads to 16 KiB.
 - Add PHP, state-machine and Android integration regression coverage.
 
