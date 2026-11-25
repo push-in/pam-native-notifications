@@ -139,17 +139,24 @@ class NotificationsModule(context: Context) : NativeModule, SurfaceRetirableModu
     }
 
     private fun registerPush(completion: ModuleCompletion) {
-        val epoch = PamPushTokenRegistration.registrationEpoch(activity.applicationContext)
-        FirebaseTokens.await(main, "getToken", "Push token registration", completion) { task ->
-            val token = task.result as? String
-            require(!token.isNullOrBlank()) { "Firebase returned an empty push token" }
-            PamPushTokenRegistration.receive(activity.applicationContext, token, expectedEpoch = epoch) {}
-            WireMap.encode(
-                mapOf(
-                    "token" to WireValue.Text(token),
-                    "provider" to WireValue.Integer(1),
-                ),
-            )
+        try {
+            worker.execute {
+                runCatching { PamPushTokenRegistration.registrationTicket(activity.applicationContext) }.fold(
+                    onSuccess = { ticket -> main.post {
+                        FirebaseTokens.await(main, "getToken", "Push token registration", completion) { task ->
+                            val token = task.result as? String
+                            require(!token.isNullOrBlank()) { "Firebase returned an empty push token" }
+                            PamPushTokenRegistration.receive(activity.applicationContext, token, ticket) {}
+                            WireMap.encode(
+                                mapOf("token" to WireValue.Text(token), "provider" to WireValue.Integer(1)),
+                            )
+                        }
+                    } },
+                    onFailure = { completion.complete(ModuleResultStatus.FAILURE, "Push token registration persistence failed".toByteArray()) },
+                )
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            completion.complete(ModuleResultStatus.FAILURE, "Notifications module is closed".toByteArray())
         }
     }
 
